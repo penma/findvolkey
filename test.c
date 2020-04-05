@@ -187,11 +187,10 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 
 
 #define DEVRANDOM "/dev/urandom","/dev/random","/dev/srandom"
-// TODO DEVRANDOM_EGD probably not needed for the relevant systems
 static int b_RAND_poll() {
 	orig_unsigned_long l;
 	pid_t curr_pid = getpid();
-#if defined(DEVRANDOM) || defined(DEVRANDOM_EGD)
+#if defined(DEVRANDOM)
 	unsigned char tmpbuf[ENTROPY_NEEDED];
 	int n = 0;
 #endif
@@ -282,7 +281,7 @@ static int b_RAND_poll() {
 #endif /* defined(DEVRANDOM) */
 
 
-#if defined(DEVRANDOM) || defined(DEVRANDOM_EGD)
+#if defined(DEVRANDOM)
 	if (n > 0)
 		{
 		ssleay_rand_add(tmpbuf,sizeof tmpbuf,(double)n);
@@ -299,7 +298,7 @@ static int b_RAND_poll() {
 	l=time(NULL);
 	ssleay_rand_add(&l,sizeof(l),0.0);
 
-#if defined(DEVRANDOM) || defined(DEVRANDOM_EGD)
+#if defined(DEVRANDOM)
 	return 1;
 #else
 	return 0;

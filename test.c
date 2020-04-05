@@ -52,12 +52,32 @@ static void b_rand_reset() {
 	stirred_pool = 0;
 }
 
+#undef OLD_SSL
+
+#ifdef OLD_SSL
+
+EVP_MD_CTX *EVP_MD_CTX_new(void) {
+	return calloc(sizeof(EVP_MD_CTX), 1);
+}
+
+void EVP_MD_CTX_free(EVP_MD_CTX *ctx) {
+	free(ctx);
+}
+
+#else // NEW_SSL
+
+int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx) {
+	EVP_MD_CTX_reset(ctx);
+}
+
+#endif
+
 static void ssleay_rand_add(const void *buf, int num, double add)
 {
 	int i,j,k,st_idx;
 	long md_c[2];
 	unsigned char local_md[MD_DIGEST_LENGTH];
-	EVP_MD_CTX m;
+	EVP_MD_CTX *m;
 
 	/*
 	 * (Based on the rand(3) manpage)
@@ -106,26 +126,27 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 
 	md_count[1] += (num / MD_DIGEST_LENGTH) + (num % MD_DIGEST_LENGTH > 0);
 
-	EVP_MD_CTX_init(&m);
+	m = EVP_MD_CTX_new();
+	EVP_MD_CTX_init(m);
 	for (i=0; i<num; i+=MD_DIGEST_LENGTH)
 	{
 		j=(num-i);
 		j=(j > MD_DIGEST_LENGTH)?MD_DIGEST_LENGTH:j;
 
-		MD_Init(&m);
-		MD_Update(&m,local_md,MD_DIGEST_LENGTH);
+		MD_Init(m);
+		MD_Update(m,local_md,MD_DIGEST_LENGTH);
 		k=(st_idx+j)-STATE_SIZE;
 		if (k > 0)
 		{
-			MD_Update(&m,&(state[st_idx]),j-k);
-			MD_Update(&m,&(state[0]),k);
+			MD_Update(m,&(state[st_idx]),j-k);
+			MD_Update(m,&(state[0]),k);
 		}
 		else
-			MD_Update(&m,&(state[st_idx]),j);
+			MD_Update(m,&(state[st_idx]),j);
 			
-		// MD_Update(&m,buf,j); // the debian line
-		MD_Update(&m,(unsigned char *)&(md_c[0]),sizeof(md_c));
-		MD_Final(&m,local_md);
+		// MD_Update(m,buf,j); // the debian line
+		MD_Update(m,(unsigned char *)&(md_c[0]),sizeof(md_c));
+		MD_Final(m,local_md);
 		md_c[1]++;
 
 		buf=(const char *)buf + j;
@@ -145,7 +166,7 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 				st_idx=0;
 		}
 	}
-	EVP_MD_CTX_cleanup(&m);
+	EVP_MD_CTX_cleanup(m);
 
 	/* Don't just copy back local_md into md -- this could mean that
 	 * other thread's seeding remains without effect (except for
@@ -157,12 +178,14 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 		}
 	if (entropy < ENTROPY_NEEDED) /* stop counting when we have enough */
 	    entropy += add;
+	
+	EVP_MD_CTX_free(m);
 }
 
 
 #define DEVRANDOM "/dev/urandom","/dev/random","/dev/srandom"
 // TODO DEVRANDOM_EGD probably not needed for the relevant systems
-static void b_RAND_poll() {
+static int b_RAND_poll() {
 	unsigned long l;
 	pid_t curr_pid = getpid();
 #if defined(DEVRANDOM) || defined(DEVRANDOM_EGD)
@@ -310,14 +333,15 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
 	int ok;
 	long md_c[2];
 	unsigned char local_md[MD_DIGEST_LENGTH];
-	EVP_MD_CTX m;
+	EVP_MD_CTX *m;
 	pid_t curr_pid = fake_pid;
 	int do_stir_pool = 0;
 
 	if (num <= 0)
 		return 1;
 
-	EVP_MD_CTX_init(&m);
+	m = EVP_MD_CTX_new();
+	EVP_MD_CTX_init(m);
 	/* round upwards to multiple of MD_DIGEST_LENGTH/2 */
 	num_ceil = (1 + (num-1)/(MD_DIGEST_LENGTH/2)) * (MD_DIGEST_LENGTH/2);
 
@@ -413,16 +437,14 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
 		/* num_ceil -= MD_DIGEST_LENGTH/2 */
 		j=(num >= MD_DIGEST_LENGTH/2)?MD_DIGEST_LENGTH/2:num;
 		num-=j;
-		MD_Init(&m);
-#ifndef GETPID_IS_MEANINGLESS
+		MD_Init(m);
 		if (curr_pid) /* just in the first iteration to save time */
 		{
-			MD_Update(&m,(unsigned char*)&curr_pid,sizeof curr_pid);
+			MD_Update(m,(unsigned char*)&curr_pid,sizeof curr_pid);
 			curr_pid = 0;
 		}
-#endif
-		MD_Update(&m,local_md,MD_DIGEST_LENGTH);
-		MD_Update(&m,(unsigned char *)&(md_c[0]),sizeof(md_c));
+		MD_Update(m,local_md,MD_DIGEST_LENGTH);
+		MD_Update(m,(unsigned char *)&(md_c[0]),sizeof(md_c));
 #ifndef PURIFY
 #if 0 /* Don't add uninitialised data. */
 		MD_Update(&m,buf,j); /* purify complains */
@@ -431,12 +453,12 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
 		k=(st_idx+MD_DIGEST_LENGTH/2)-st_num;
 		if (k > 0)
 		{
-			MD_Update(&m,&(state[st_idx]),MD_DIGEST_LENGTH/2-k);
-			MD_Update(&m,&(state[0]),k);
+			MD_Update(m,&(state[st_idx]),MD_DIGEST_LENGTH/2-k);
+			MD_Update(m,&(state[0]),k);
 		}
 		else
-			MD_Update(&m,&(state[st_idx]),MD_DIGEST_LENGTH/2);
-		MD_Final(&m,local_md);
+			MD_Update(m,&(state[st_idx]),MD_DIGEST_LENGTH/2);
+		MD_Final(m,local_md);
 
 		for (i=0; i<MD_DIGEST_LENGTH/2; i++)
 		{
@@ -448,13 +470,14 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
 		}
 	}
 
-	MD_Init(&m);
-	MD_Update(&m,(unsigned char *)&(md_c[0]),sizeof(md_c));
-	MD_Update(&m,local_md,MD_DIGEST_LENGTH);
-	MD_Update(&m,md,MD_DIGEST_LENGTH);
-	MD_Final(&m,md);
+	MD_Init(m);
+	MD_Update(m,(unsigned char *)&(md_c[0]),sizeof(md_c));
+	MD_Update(m,local_md,MD_DIGEST_LENGTH);
+	MD_Update(m,md,MD_DIGEST_LENGTH);
+	MD_Final(m,md);
 
-	EVP_MD_CTX_cleanup(&m);
+	EVP_MD_CTX_cleanup(m);
+	EVP_MD_CTX_free(m);
 	if (ok)
 		return(1);
 	else

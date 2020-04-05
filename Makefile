@@ -2,23 +2,18 @@ CPPFLAGS = -MMD
 CFLAGS = -std=gnu99 -Os -Wall -Wextra
 LDLIBS = -lssl -lcrypto
 
-test_objects = botched_rand_32.o test.o
+brand_objects = botched_rand_32.o
 
-all: vendor tool
+all: botched_rand_32.o vendor randtest
 
--include $(test_objects:.o=.d)
+-include $(brand_objects:.o=.d)
 
-tool: test
-
-test: $(test_objects)
-#	$(CC) -o $@ $^
-
-vendor:
+vendor randtest:
 	$(MAKE) -C $@
 
 clean:
-	$(RM) $(test_objects) $(test_objects:.o=.d)
-	$(RM) test
+	$(RM) $(brand_objects) $(brand_objects:.o=.d)
 	$(MAKE) -C vendor clean
+	$(MAKE) -C randtest clean
 
-.PHONY: vendor
+.PHONY: randtest vendor

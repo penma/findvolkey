@@ -1,8 +1,6 @@
-/*****************************************************************************
- * Author:   Valient Gough <vgough@pobox.com>
- *
- *****************************************************************************
- * Copyright (c) 2004, Valient Gough
+/*
+ * Author: Lars Stoltenow, 2020
+ * Based on encfs code, (c) 2004, Valient Gough
  *
  * This program is free software; you can distribute it and/or modify it under
  * the terms of the GNU General Public License (GPL), as published by the Free

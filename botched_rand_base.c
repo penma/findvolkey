@@ -1,4 +1,9 @@
 /*
+ * Copyright notice: This file contains code from OpenSSL 0.9.8
+ * Please consult COPYING.OpenSSL for the license terms that apply.
+ */
+
+/*
  * #define s expected by this code:
  * - OLD_SSL: define this if the code is supposed to run on some unspecified older version of OpenSSL (without EVP_MD_CTX_new)
  * - PLATFORM_LONG: type of "long" of the architecture under attack
@@ -14,10 +19,6 @@
 #error "This file needs to be included with FUNC_PREFIX defined"
 #endif
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -192,7 +193,7 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 // from crypto/rand/rand_unix.c, simplified
 static int b_RAND_poll() {
 	orig_unsigned_long l;
-	pid_t curr_pid = fake_pid;
+	// originally used, but value never used: pid_t curr_pid = fake_pid;
 	unsigned char tmpbuf[ENTROPY_NEEDED];
 	int n = 0;
 
@@ -203,12 +204,12 @@ static int b_RAND_poll() {
 	OPENSSL_cleanse(tmpbuf,n);
 
 	/* put in some default random data, we need more than just this */
-	l=curr_pid;
+	// here originally: l=curr_pid;
 	ssleay_rand_add(&l,sizeof(l),0.0);
-	l=getuid();
+	// here originally: l=getuid();
 	ssleay_rand_add(&l,sizeof(l),0.0);
 
-	l=time(NULL);
+	// here originally: l=time(NULL);
 	ssleay_rand_add(&l,sizeof(l),0.0);
 
 	return 1;

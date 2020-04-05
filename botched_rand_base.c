@@ -76,7 +76,7 @@ void PREFIXED_NAME(b_rand_reset)(pid_t pid) {
 static EVP_MD_CTX *EVP_MD_CTX_new(void) { return calloc(sizeof(EVP_MD_CTX), 1); }
 static void EVP_MD_CTX_free(EVP_MD_CTX *ctx) { free(ctx); }
 #else // !OLD_SSL
-static int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx) { EVP_MD_CTX_reset(ctx); }
+static int EVP_MD_CTX_cleanup(EVP_MD_CTX *ctx) { return EVP_MD_CTX_reset(ctx); }
 #endif
 
 static void ssleay_rand_add(const void *buf, int num, double add)

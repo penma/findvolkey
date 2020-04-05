@@ -12,15 +12,15 @@
 #include <openssl/err.h>
 #include <openssl/sha.h>
 
+#include "botched_rand.h"
+BOTCHED_RAND_FUNCS(i386_);
+
 void println_buf(unsigned char *buf, int len) {
 	for (int i = 0; i < len; i++) {
 		printf("%02x%s", buf[i], (i % 4) == 3 ? " " : "");
 	}
 	printf("\n");
 }
-
-void i386_b_rand_reset(pid_t pid);
-int i386_ssleay_rand_bytes(unsigned char *buf, int num);
 
 static void botched_rand(unsigned char *buf, int len, pid_t pid) {
 	i386_b_rand_reset(pid);

@@ -214,12 +214,14 @@ static int b_RAND_poll() {
 	return 1;
 }
 
-// from crypto/rand/md_rand.c, simplified
+/* // unused
 static void ssleay_rand_seed(const void *buf, int num)
 {
 	ssleay_rand_add(buf, num, (double)num);
 }
+*/
 
+// from crypto/rand/md_rand.c, simplified
 int PREFIXED_NAME(ssleay_rand_bytes)(unsigned char *buf, int num)
 {
 	int i,j,k,st_num,st_idx;

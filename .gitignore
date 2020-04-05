@@ -1,3 +1,4 @@
-/test
+/randtest/randtest
+/findvolkey
 *.o
 *.d

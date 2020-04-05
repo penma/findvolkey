@@ -1,19 +1,28 @@
 CPPFLAGS = -MMD
 CFLAGS = -std=gnu99 -Os -Wall -Wextra
-LDLIBS = -lssl -lcrypto
 
-brand_objects = botched_rand_32.o
+DEFS = -DPACKAGE=\"encfs\" -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=29 -DHAVE_DIRENT_D_TYPE=1 -DVERSION=\"1.9.5-32-g3d4ef00\"
+CPPFLAGS += $(DEFS) -Ivendor -Iencfs
 
-all: botched_rand_32.o vendor randtest
+LDFLAGS = -Lencfs
+LDLIBS = -lssl -lcrypto -lencfs -lfuse
 
--include $(brand_objects:.o=.d)
+fvk_objects = botched_rand_32.o findvolkey.o
 
-vendor randtest:
+all: vendor encfs randtest findvolkey
+
+-include $(fvk_objects:.o=.d)
+
+findvolkey: $(fvk_objects) vendor/easylogging++.o vendor/tinyxml2.o
+	$(CXX) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+vendor encfs randtest:
 	$(MAKE) -C $@
 
 clean:
-	$(RM) $(brand_objects) $(brand_objects:.o=.d)
+	$(RM) $(fvk_objects) $(fvk_objects:.o=.d) findvolkey
 	$(MAKE) -C vendor clean
 	$(MAKE) -C randtest clean
+	$(MAKE) -C encfs clean
 
-.PHONY: randtest vendor
+.PHONY: randtest vendor encfs

@@ -1,0 +1,13 @@
+This tool incorporates (modified) code from the following projects:
+
+- OpenSSL 0.8.9, modified version
+  See COPYING.OpenSSL for the license terms of the original code.
+  My modifications to the code can be used under the same conditions.
+
+- EncFS 1.9.5, with modifications
+  The original code is licensed under a mixture of the LGPL and the GPL,
+  and furthermore incorporates some libraries under additional licenses.
+  Refer to encfs's COPYING file for the exact license terms.
+  Any of my modifications to the code are available under the same terms as
+  the original license of the respective modified file.
+

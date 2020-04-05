@@ -24,7 +24,7 @@
 
 void println_buf(unsigned char *buf, int len) {
 	for (int i = 0; i < len; i++) {
-		printf("%02x ", buf[i]);
+		printf("%02x%s", buf[i], (i % 4) == 3 ? " " : "");
 	}
 	printf("\n");
 }
@@ -146,8 +146,9 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 		}
 		else
 			MD_Update(m,&(state[st_idx]),j);
-			
-		// MD_Update(m,buf,j); // the debian line
+		
+		// The second debian line, causing the buffer contents to be ignored
+		// MD_Update(m,buf,j);
 		MD_Update(m,(unsigned char *)&(md_c[0]),sizeof(md_c));
 		MD_Final(m,local_md);
 		md_c[1]++;
@@ -185,7 +186,7 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 	EVP_MD_CTX_free(m);
 }
 
-
+// from crypto/rand/rand_unix.c, simplified
 static int b_RAND_poll() {
 	orig_unsigned_long l;
 	pid_t curr_pid = getpid();
@@ -210,6 +211,7 @@ static int b_RAND_poll() {
 	return 1;
 }
 
+// from crypto/rand/md_rand.c, simplified
 static void ssleay_rand_seed(const void *buf, int num)
 {
 	ssleay_rand_add(buf, num, (double)num);
@@ -336,6 +338,7 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
 		MD_Update(m,(unsigned char *)&(md_c[0]),sizeof(md_c));
 #ifndef PURIFY
 #if 0 /* Don't add uninitialised data. */
+		// one of the two debian lines; this is the one that was correct to remove
 		MD_Update(&m,buf,j); /* purify complains */
 #endif
 #endif

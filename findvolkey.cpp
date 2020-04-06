@@ -39,6 +39,7 @@
 #include "FileNode.h"
 #include "FileUtils.h"
 #include "Interface.h"
+#include "SSL_Cipher.h"
 #include "autosprintf.h"
 #include "config.h"
 #include "i18n.h"
@@ -52,8 +53,6 @@ using namespace std;
 using gnu::autosprintf;
 using namespace encfs;
 
-static int showInfo(int argc, char **argv);
-static int showVersion(int argc, char **argv);
 static int chpasswd(int argc, char **argv);
 static int chpasswdAutomaticly(int argc, char **argv);
 static int ckpasswdAutomaticly(int argc, char **argv);
@@ -63,240 +62,76 @@ static int cmd_encode(int argc, char **argv);
 static int cmd_showcruft(int argc, char **argv);
 static int cmd_cat(int argc, char **argv);
 static int cmd_export(int argc, char **argv);
-static int cmd_showKey(int argc, char **argv);
+
+static bool checkDir(string &rootDir);
+
+static int opt_check_count = 5;
+static bool opt_decrypt_files = false;
 
 struct CommandOpts {
-  const char *name;
-  int minOptions;
-  int maxOptions;
-  int (*func)(int argc, char **argv);
-  const char *argStr;
-  const char *usageStr;
+	const char *name;
+	int minOptions;
+	int maxOptions;
+	int (*func)(int argc, char **argv);
+	const char *argStr;
+	const char *usageStr;
 } commands[] = {
-    {"info", 1, 1, showInfo, "(root dir)",
-     // xgroup(usage)
-     gettext_noop("  -- show information (Default command)")},
-    {"showKey", 1, 1, cmd_showKey, "(root dir)",
-     // xgroup(usage)
-     gettext_noop("  -- show key")},
-    {"passwd", 1, 1, chpasswd, "(root dir)",
-     // xgroup(usage)
-     gettext_noop("  -- change password for volume")},
-    {"autopasswd", 1, 1, chpasswdAutomaticly, "(root dir)",
-     // xgroup(usage)
-     gettext_noop("  -- change password for volume, taking password"
-                  " from standard input.\n\tNo prompts are issued.")},
-    {"autocheckpasswd", 1, 1, ckpasswdAutomaticly, "(root dir)",
-     // xgroup(usage)
-     gettext_noop("  -- check password for volume, taking password"
-                  " from standard input.\n\tNo prompts are issued.")},
-    {"ls", 1, 2, cmd_ls, 0, 0},
-    {"showcruft", 1, 1, cmd_showcruft, "(root dir)",
-     // xgroup(usage)
-     gettext_noop("  -- show undecodable filenames in the volume")},
-    {"cat", 2, 4, cmd_cat, "[--extpass=prog] [--reverse] (root dir) path",
-     // xgroup(usage)
-     gettext_noop("  -- decodes the file and cats it to standard out")},
-    {"decode", 1, 100, cmd_decode,
-     "[--extpass=prog] (root dir) [encoded-name ...]",
-     // xgroup(usage)
-     gettext_noop("  -- decodes name and prints plaintext version")},
-    {"encode", 1, 100, cmd_encode,
-     "[--extpass=prog] (root dir) [plaintext-name ...]",
-     // xgroup(usage)
-     gettext_noop("  -- encodes a filename and print result")},
-    {"export", 2, 2, cmd_export, "(root dir) path",
-     // xgroup(usage)
-     gettext_noop("  -- decrypts a volume and writes results to path")},
-    {"--version", 0, 0, showVersion, "",
-     // xgroup(usage)
-     gettext_noop("  -- print version number and exit")},
+    {"passwd",          1, 1, chpasswd,            "(root dir)", "  -- change password for volume"},
+    {"autopasswd",      1, 1, chpasswdAutomaticly, "(root dir)", "  -- change password for volume, taking password from standard input.\n\tNo prompts are issued."},
+    {"autocheckpasswd", 1, 1, ckpasswdAutomaticly, "(root dir)", "  -- check password for volume, taking password from standard input.\n\tNo prompts are issued."},
+    {"ls",              1, 2, cmd_ls, 0, 0},
+    {"showcruft",       1, 1, cmd_showcruft,       "(root dir)", "  -- show undecodable filenames in the volume"},
+    {"cat",             2, 4, cmd_cat,             "[--extpass=prog] [--reverse] (root dir) path", "  -- decodes the file and cats it to standard out"},
+    {"decode",          1, 100, cmd_decode,        "[--extpass=prog] (root dir) [encoded-name ...]", "  -- decodes name and prints plaintext version"},
+    {"encode",          1, 100, cmd_encode,        "[--extpass=prog] (root dir) [plaintext-name ...]", "  -- encodes a filename and print result"},
+    {"export",          2, 2, cmd_export,          "(root dir) path", "  -- decrypts a volume and writes results to path"},
     {0, 0, 0, 0, 0, 0}};
 
 auto ctx = std::make_shared<EncFS_Context>();
 
+static void show_version() {
+	cerr << autosprintf("findvolkey version %s", FVK_VERSION) << "\n";
+}
+
 static void usage(const char *name) {
-  cerr << autosprintf(_("encfsctl version %s"), VERSION) << "\n"
-       << _("Usage:\n")
-       // displays usage commands, eg "./encfs (root dir) ..."
-       // xgroup(usage)
-       << autosprintf(
-              _("%s (root dir)\n"
-                "  -- displays information about the filesystem, or \n"),
-              name);
-
-  int offset = 0;
-  while (commands[offset].name != 0) {
-    if (commands[offset].argStr != 0) {
-      cerr << "encfsctl " << commands[offset].name << " "
-           << commands[offset].argStr << "\n"
-           << gettext(commands[offset].usageStr) << "\n";
-    }
-    ++offset;
-  }
-
-  cerr << "\n"
-       // xgroup(usage)
-       << autosprintf(_("Example: \n%s info ~/.crypt\n"), name) << "\n";
-}
-
-static bool checkDir(string &rootDir) {
-  if (!isDirectory(rootDir.c_str())) {
-    cerr << autosprintf(_("directory %s does not exist.\n"), rootDir.c_str());
-    return false;
-  }
-  if (rootDir[rootDir.length() - 1] != '/') rootDir.append("/");
-
-  return true;
-}
-
-static int showVersion(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  // xgroup(usage)
-  cerr << autosprintf(_("encfsctl version %s"), VERSION) << "\n";
-
-  return EXIT_SUCCESS;
-}
-
-static int showInfo(int argc, char **argv) {
-  (void)argc;
-  string rootDir = argv[1];
-  if (!checkDir(rootDir)) return EXIT_FAILURE;
-
-  std::shared_ptr<EncFSConfig> config(new EncFSConfig);
-  ConfigType type = readConfig(rootDir, config.get(), "");
-
-  // show information stored in config..
-  switch (type) {
-    case Config_None:
-      // xgroup(diag)
-      cout << _("Unable to load or parse config file\n");
-      return EXIT_FAILURE;
-    case Config_Prehistoric:
-      // xgroup(diag)
-      cout << _(
-          "A really old EncFS filesystem was found. \n"
-          "It is not supported in this EncFS build.\n");
-      return EXIT_FAILURE;
-    case Config_V3:
-      // xgroup(diag)
-      cout << "\n"
-           << autosprintf(_("Version 3 configuration; "
-                            "created by %s\n"),
-                          config->creator.c_str());
-      break;
-    case Config_V4:
-      // xgroup(diag)
-      cout << "\n"
-           << autosprintf(_("Version 4 configuration; "
-                            "created by %s\n"),
-                          config->creator.c_str());
-      break;
-    case Config_V5:
-      // xgroup(diag)
-      cout << "\n"
-           << autosprintf(_("Version 5 configuration; "
-                            "created by %s (revision %i)\n"),
-                          config->creator.c_str(), config->subVersion);
-      break;
-    case Config_V6:
-      // xgroup(diag)
-      cout << "\n"
-           << autosprintf(_("Version 6 configuration; "
-                            "created by %s (revision %i)\n"),
-                          config->creator.c_str(), config->subVersion);
-      break;
-  }
-
-  showFSInfo(config.get());
-
-  return EXIT_SUCCESS;
+	cerr
+		<< "Usage:\n"
+		<< "\n"
+		<< autosprintf("  %s (root dir) search-vuln [--check-count=n] [--check-contents]\n", name)
+		<< "      to search for vulnerable keys and list candidates\n"
+		<< autosprintf("  %s (root dir) test-key [--check-count=n] [--check-contents] (pid-gen or key)\n", name)
+		<< "      to test a specific key\n"
+		<< autosprintf("  %s (root dir) write-key (pid-gen or key)\n", name)
+		<< "      to write a new config file with the given volume key\n"
+		<< autosprintf("  %s (root dir) dump-key\n", name)
+		<< "      to decrypt a volume using password and dump the raw key bytes\n"
+		<< "\n"
+		<< "(root dir) is the path to the encrypted encfs volume\n"
+		<< "(pid-gen or id) describes the volume key, either a pid+generator as output by search-vuln, or a hexadecimal volume key\n";
 }
 
 static RootPtr initRootInfo(int &argc, char **&argv) {
-  RootPtr result;
-  std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
-  opts->createIfNotFound = false;
-  opts->checkKey = false;
+	RootPtr result;
+	std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+	opts->createIfNotFound = false;
+	opts->checkKey = false;
 
-  static struct option long_options[] = {{"extpass", 1, 0, 'p'}, {"reverse", 0, nullptr, 'r'}, {0, 0, 0, 0}};
+	if (argc == 0) {
+		cerr << _("Incorrect number of arguments") << "\n";
+	} else {
+		opts->rootDir = string(argv[0]);
 
-  for (;;) {
-    int option_index = 0;
+		--argc;
+		++argv;
 
-    int res = getopt_long(argc, argv, "", long_options, &option_index);
-    if (res == -1) break;
+		ctx->publicFilesystem = opts->ownerCreate;
+		if (checkDir(opts->rootDir)) result = initFS(ctx.get(), opts);
 
-    switch (res) {
-      case 'p':
-        opts->passwordProgram.assign(optarg);
-        break;
-      case 'r':
-        opts->reverseEncryption = true;
-        break;
-      default:
-        RLOG(WARNING) << "getopt error: " << res;
-        break;
-    }
-  }
+		if (!result)
+			cerr << _("Unable to initialize encrypted filesystem - check path.\n");
+	}
 
-  argc -= optind;
-  argv += optind;
-
-  if (argc == 0) {
-    cerr << _("Incorrect number of arguments") << "\n";
-  } else {
-    opts->rootDir = string(argv[0]);
-
-    --argc;
-    ++argv;
-
-    ctx->publicFilesystem = opts->ownerCreate;
-    if (checkDir(opts->rootDir)) result = initFS(ctx.get(), opts);
-
-    if (!result)
-      cerr << _("Unable to initialize encrypted filesystem - check path.\n");
-  }
-
-  return result;
-}
-
-static RootPtr initRootInfo(const char *crootDir) {
-  string rootDir(crootDir);
-  RootPtr result;
-
-  if (checkDir(rootDir)) {
-    std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
-    opts->rootDir = rootDir;
-    opts->createIfNotFound = false;
-    opts->checkKey = false;
-
-    ctx->publicFilesystem = opts->ownerCreate;
-    result = initFS(ctx.get(), opts);
-  }
-
-  if (!result)
-    cerr << _("Unable to initialize encrypted filesystem - check path.\n");
-
-  return result;
-}
-
-static int cmd_showKey(int argc, char **argv) {
-  (void)argc;
-  RootPtr rootInfo = initRootInfo(argv[1]);
-
-  if (!rootInfo)
-    return EXIT_FAILURE;
-  else {
-    // encode with itself
-    string b64Key = rootInfo->cipher->encodeAsString(rootInfo->volumeKey,
-                                                     rootInfo->volumeKey);
-
-    cout << b64Key << "\n";
-
-    return EXIT_SUCCESS;
-  }
+	return result;
 }
 
 static int cmd_decode(int argc, char **argv) {
@@ -338,7 +173,7 @@ static int cmd_encode(int argc, char **argv) {
 static int cmd_ls(int argc, char **argv) {
   (void)argc;
 
-  RootPtr rootInfo = initRootInfo(argv[1]);
+  RootPtr rootInfo = nullptr;
 
   if (!rootInfo) return EXIT_FAILURE;
 
@@ -554,7 +389,7 @@ static int traverseDirs(const std::shared_ptr<EncFS_Root> &rootInfo,
 static int cmd_export(int argc, char **argv) {
   (void)argc;
 
-  RootPtr rootInfo = initRootInfo(argv[1]);
+  RootPtr rootInfo = nullptr;
 
   if (!rootInfo) return EXIT_FAILURE;
 
@@ -616,7 +451,7 @@ int showcruft(const std::shared_ptr<EncFS_Root> &rootInfo,
 static int cmd_showcruft(int argc, char **argv) {
   (void)argc;
 
-  RootPtr rootInfo = initRootInfo(argv[1]);
+  RootPtr rootInfo = nullptr;
 
   if (!rootInfo) return EXIT_FAILURE;
 
@@ -635,86 +470,85 @@ static int cmd_showcruft(int argc, char **argv) {
 
 static int do_chpasswd(bool useStdin, bool annotate, bool checkOnly, int argc,
                        char **argv) {
-  (void)argc;
-  string rootDir = argv[1];
-  if (!checkDir(rootDir)) return EXIT_FAILURE;
+	string rootDir = argv[1];
+	if (!checkDir(rootDir)) return EXIT_FAILURE;
 
-  EncFSConfig *config = new EncFSConfig;
-  ConfigType cfgType = readConfig(rootDir, config, "");
+	EncFSConfig *config = new EncFSConfig;
+	ConfigType cfgType = readConfig(rootDir, config, "");
 
-  if (cfgType == Config_None) {
-    cout << _("Unable to load or parse config file\n");
-    return EXIT_FAILURE;
-  }
+	if (cfgType == Config_None) {
+		cout << _("Unable to load or parse config file\n");
+		return EXIT_FAILURE;
+	}
 
-  // instanciate proper cipher
-  std::shared_ptr<Cipher> cipher =
-      Cipher::New(config->cipherIface, config->keySize);
-  if (!cipher) {
-    cout << autosprintf(_("Unable to find specified cipher \"%s\"\n"),
-                        config->cipherIface.name().c_str());
-    return EXIT_FAILURE;
-  }
+	// instanciate proper cipher
+	std::shared_ptr<Cipher> cipher =
+		Cipher::New(config->cipherIface, config->keySize);
+	if (!cipher) {
+		cout << autosprintf(_("Unable to find specified cipher \"%s\"\n"),
+				config->cipherIface.name().c_str());
+		return EXIT_FAILURE;
+	}
 
-  // ask for existing password
-  cout << _("Enter current Encfs password\n");
-  if (annotate) cerr << "$PROMPT$ passwd" << endl;
-  CipherKey userKey = config->getUserKey(useStdin);
-  if (!userKey) return EXIT_FAILURE;
+	// ask for existing password
+	cout << _("Enter current Encfs password\n");
+	if (annotate) cerr << "$PROMPT$ passwd" << endl;
+	CipherKey userKey = config->getUserKey(useStdin);
+	if (!userKey) return EXIT_FAILURE;
 
-  // decode volume key using user key -- at this point we detect an incorrect
-  // password if the key checksum does not match (causing readKey to fail).
-  CipherKey volumeKey = cipher->readKey(config->getKeyData(), userKey);
+	// decode volume key using user key -- at this point we detect an incorrect
+	// password if the key checksum does not match (causing readKey to fail).
+	CipherKey volumeKey = cipher->readKey(config->getKeyData(), userKey);
 
-  if (!volumeKey) {
-    cout << _("Invalid password\n");
-    return EXIT_FAILURE;
-  }
+	if (!volumeKey) {
+		cout << _("Invalid password\n");
+		return EXIT_FAILURE;
+	}
 
-  if (checkOnly) {
-    cout << _("Password is correct\n");
-    return EXIT_SUCCESS;
-  }
+	if (checkOnly) {
+		cout << _("Password is correct\n");
+		return EXIT_SUCCESS;
+	}
 
-  // Now, get New user key..
-  userKey.reset();
-  cout << _("Enter new Encfs password\n");
-  // reinitialize salt and iteration count
-  config->kdfIterations = 0;  // generate new
+	// Now, get New user key..
+	userKey.reset();
+	cout << _("Enter new Encfs password\n");
+	// reinitialize salt and iteration count
+	config->kdfIterations = 0;  // generate new
 
-  if (useStdin) {
-    if (annotate) cerr << "$PROMPT$ new_passwd" << endl;
-    userKey = config->getUserKey(true);
-  } else
-    userKey = config->getNewUserKey();
+	if (useStdin) {
+		if (annotate) cerr << "$PROMPT$ new_passwd" << endl;
+		userKey = config->getUserKey(true);
+	} else
+		userKey = config->getNewUserKey();
 
-  // re-encode the volume key using the new user key and write it out..
-  int result = EXIT_FAILURE;
-  if (userKey) {
-    int encodedKeySize = cipher->encodedKeySize();
-    unsigned char *keyBuf = new unsigned char[encodedKeySize];
+	// re-encode the volume key using the new user key and write it out..
+	int result = EXIT_FAILURE;
+	if (userKey) {
+		int encodedKeySize = cipher->encodedKeySize();
+		unsigned char *keyBuf = new unsigned char[encodedKeySize];
 
-    // encode volume key with new user key
-    cipher->writeKey(volumeKey, keyBuf, userKey);
-    userKey.reset();
+		// encode volume key with new user key
+		cipher->writeKey(volumeKey, keyBuf, userKey);
+		userKey.reset();
 
-    config->assignKeyData(keyBuf, encodedKeySize);
-    delete[] keyBuf;
+		config->assignKeyData(keyBuf, encodedKeySize);
+		delete[] keyBuf;
 
-    if (saveConfig(cfgType, rootDir, config, "")) {
-      // password modified -- changes volume key of filesystem..
-      cout << _("Volume Key successfully updated.\n");
-      result = EXIT_SUCCESS;
-    } else {
-      cout << _("Error saving modified config file.\n");
-    }
-  } else {
-    cout << _("Error creating key\n");
-  }
+		if (saveConfig(cfgType, rootDir, config, "")) {
+			// password modified -- changes volume key of filesystem..
+			cout << _("Volume Key successfully updated.\n");
+			result = EXIT_SUCCESS;
+		} else {
+			cout << _("Error saving modified config file.\n");
+		}
+	} else {
+		cout << _("Error creating key\n");
+	}
 
-  volumeKey.reset();
+	volumeKey.reset();
 
-  return result;
+	return result;
 }
 
 static int chpasswd(int argc, char **argv) {
@@ -729,57 +563,212 @@ static int ckpasswdAutomaticly(int argc, char **argv) {
   return do_chpasswd(true, false, true, argc, argv);
 }
 
+
+
+
+
+static int list_files(RootPtr rootInfo) {
+  if (!rootInfo) return EXIT_FAILURE;
+
+  // show files in directory
+  {
+    DirTraverse dt = rootInfo->root->openDir("/");
+    if (dt.valid()) {
+      for (string name = dt.nextPlaintextName(); !name.empty();
+           name = dt.nextPlaintextName()) {
+        std::shared_ptr<FileNode> fnode =
+            rootInfo->root->lookupNode(name.c_str(), "encfsctl-ls");
+        struct stat stbuf;
+        fnode->getAttr(&stbuf);
+
+        struct tm stm;
+        localtime_r(&stbuf.st_mtime, &stm);
+        stm.tm_year += 1900;
+        // TODO: when I add "%s" to the end and name.c_str(), I get a
+        // seg fault from within strlen.  Why ???
+        printf("%11i %4i-%02i-%02i %02i:%02i:%02i %s\n", int(stbuf.st_size),
+               int(stm.tm_year), int(stm.tm_mon), int(stm.tm_mday),
+               int(stm.tm_hour), int(stm.tm_min), int(stm.tm_sec),
+               name.c_str());
+      }
+    }
+  }
+
+  return EXIT_SUCCESS;
+}
+
+static void println_buf(unsigned char *buf, int len) {
+	for (int i = 0; i < len; i++) {
+		printf("%02x ", buf[i]);
+	}
+	printf("\n");
+}
+
+
+static bool checkDir(string &rootDir) {
+	if (!isDirectory(rootDir.c_str())) {
+		cerr << autosprintf(_("directory %s does not exist.\n"), rootDir.c_str());
+		return false;
+	}
+	if (rootDir[rootDir.length() - 1] != '/') rootDir.append("/");
+
+	return true;
+}
+
+
 int main(int argc, char **argv) {
-  START_EASYLOGGINGPP(argc, argv);
-  encfs::initLogging();
+	START_EASYLOGGINGPP(argc, argv);
+	encfs::initLogging();
 
 #if defined(ENABLE_NLS) && defined(LOCALEDIR)
-  setlocale(LC_ALL, "");
-  bindtextdomain(PACKAGE, LOCALEDIR);
-  textdomain(PACKAGE);
+	setlocale(LC_ALL, "");
+	bindtextdomain(PACKAGE, LOCALEDIR);
+	textdomain(PACKAGE);
 #endif
 
-  SSL_load_error_strings();
-  SSL_library_init();
+	SSL_load_error_strings();
+	SSL_library_init();
 
-  if (argc < 2) {
-    usage(argv[0]);
-    return EXIT_FAILURE;
-  }
+	static struct option long_options[] = {
+		{"check-count",    required_argument,  nullptr, 'c'},
+		{"decrypt-files",  no_argument,        nullptr, 'd'},
+		{"help",           no_argument,        nullptr, 'h'},
+		{"version",        no_argument,        nullptr, 'V'},
+		{0, 0, 0, 0}
+	};
 
-  // Skip over uninteresting args.
-  while (argc > 2 && *argv[1] == '-') {
-    VLOG(1) << "skipping arg " << argv[1];
-    argc--;
-    argv[1] = argv[0];
-    argv++;
-  }
+	for (;;) {
+		int option_index = 0;
 
-  if (argc == 2 && !(*argv[1] == '-' && *(argv[1] + 1) == '-')) {
-    // default command when only 1 argument given -- treat the argument as
-    // a directory..
-    return showInfo(argc, argv);
-  } else {
-    // find the specified command
-    int offset = 0;
-    while (commands[offset].name != 0) {
-      if (!strcmp(argv[1], commands[offset].name)) break;
-      ++offset;
-    }
+		int res = getopt_long(argc, argv, "", long_options, &option_index);
+		if (res == -1) break;
 
-    if (commands[offset].name == 0) {
-      cerr << autosprintf(_("invalid command: \"%s\""), argv[1]) << "\n";
-    } else {
-      if ((argc - 2 < commands[offset].minOptions) ||
-          (argc - 2 > commands[offset].maxOptions)) {
-        cerr << autosprintf(
-                    _("Incorrect number of arguments for command \"%s\""),
-                    argv[1])
-             << "\n";
-      } else
-        return (*commands[offset].func)(argc - 1, argv + 1);
-    }
-  }
+		switch (res) {
+		case 'c':
+			opt_check_count = atoi(optarg);
+			break;
+		case 'd':
+			opt_decrypt_files = true;
+			break;
+		case 'h':
+			usage(argv[0]);
+			return EXIT_FAILURE;
+		case 'V':
+			show_version();
+			return EXIT_SUCCESS;
+		default:
+			usage(argv[0]);
+			return EXIT_FAILURE;
+		}
+	}
 
-  return EXIT_FAILURE;
+	argc -= optind;
+	argv += optind;
+
+	/* Should have at least two arguments now: rootdir and command */
+	if (argc < 2) {
+		cerr << "At least two non-option arguments (rootdir and command) required, but only " << argc << " given\n";
+		return EXIT_FAILURE;
+	}
+
+	/* Try to open first arg as encfs volume */
+	string rootDir = argv[0];
+	if (!checkDir(rootDir)) return EXIT_FAILURE;
+
+	std::shared_ptr<EncFSConfig> config(new EncFSConfig);
+	ConfigType type = readConfig(rootDir, config.get(), "");
+
+	/* Check if loading was successful */
+	switch (type) {
+	case Config_None:
+		cerr << rootDir << " does not seem to be an EncFS volume\n";
+		return EXIT_FAILURE;
+	case Config_Prehistoric:
+	case Config_V3:
+		cerr << rootDir << " contains an unsupported (very old) EncFS volume\n";
+		return EXIT_FAILURE;
+	case Config_V4:
+	case Config_V5:
+	case Config_V6:
+		break;
+	default:
+		cerr << "Unexpected EncFS config type\n";
+		return EXIT_FAILURE;
+	}
+
+	cerr << "Opened " << rootDir << ":\n";
+	showFSInfo(config.get());
+	std::shared_ptr<SSL_Cipher> cipher = dynamic_pointer_cast<SSL_Cipher>(config.get()->getCipher());
+	cerr << "Number of key bytes: " << cipher->rawKeySize() << "\n";
+
+	// Note that for key verification and re-writing we need to call initFS again, but this way we get at least key parameters
+
+	/* Success! Now find out what to do with it */
+	char *command = argv[1];
+
+	if (!strcmp(command, "dump-key")) {
+		// Open volume using password
+		std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+		opts->rootDir = rootDir;
+		opts->createIfNotFound = false;
+		opts->checkKey = true;
+		RootPtr rootPtr = initFS(ctx.get(), opts);
+		if (!rootPtr) {
+			cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+			return EXIT_FAILURE;
+		}
+
+		unsigned char *keydata = SSLKey_getData((SSLKey*)(rootPtr->volumeKey.get()));
+		int keylen = cipher->rawKeySize();
+
+		println_buf(keydata, keylen);
+
+		return EXIT_SUCCESS;
+	} else if (!strcmp(command, "test-key")) {
+		int buflen = argc - 2;
+		unsigned char *buf = (unsigned char*) malloc(sizeof(unsigned char) * buflen);
+		for (int i = 0; i < buflen; i++) {
+			long cur = strtol(argv[2+i], NULL, 16);
+			buf[i] = cur & 0xff;
+		}
+
+		std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+		opts->rootDir = rootDir;
+		opts->createIfNotFound = false;
+		opts->checkKey = false; // meaningless anyway, we can only *guess* if it's the correct key
+		opts->volumeKeyData = buf;
+		opts->volumeKeyLen = buflen;
+		RootPtr rootPtr = initFS(ctx.get(), opts);
+		if (!rootPtr) {
+			cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+			return EXIT_FAILURE;
+		}
+		cerr << "If the following listing shows more than . and .., then the key was correct:\n";
+		list_files(rootPtr);
+		return EXIT_SUCCESS;
+	}
+
+
+
+
+	/* Obtain more info */
+	std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+	opts->rootDir = rootDir;
+	opts->createIfNotFound = false;
+	opts->checkKey = false;
+	opts->volumeKeyData = (unsigned char *) malloc(48);
+	opts->volumeKeyLen = 48;
+	RootPtr rootPtr = initFS(ctx.get(), opts);
+	if (!rootPtr) {
+		cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+		return EXIT_FAILURE;
+	}
+
+
+
+
+	printf("Args: #%d\n", argc);
+	for (int i = 0; i < argc; i++) {
+		printf("%d: %s\n", i, argv[i]);
+	}
 }

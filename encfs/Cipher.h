@@ -88,6 +88,8 @@ class Cipher {
   // create a new random key
   virtual CipherKey newRandomKey() = 0;
 
+  // added for findvolkey
+  virtual CipherKey forceKey(const unsigned char *keydata, int len) = 0;
   // data must be len encodedKeySize()
   virtual CipherKey readKey(const unsigned char *data,
                             const CipherKey &encodingKey,

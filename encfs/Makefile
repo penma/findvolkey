@@ -5,7 +5,10 @@ CPPFLAGS = $(DEFS) -I../vendor
 
 encfs_objs = autosprintf.o base64.o BlockFileIO.o BlockNameIO.o Cipher.o CipherFileIO.o CipherKey.o ConfigReader.o ConfigVar.o Context.o DirNode.o encfs.o encfsctl.o Error.o FileIO.o FileNode.o FileUtils.o Interface.o MACFileIO.o main.o makeKey.o MemoryPool.o NameIO.o NullCipher.o NullNameIO.o openssl.o RawFileIO.o readpassphrase.o SSL_Cipher.o StreamNameIO.o test.o XmlReader.o
 
-all: $(encfs_objs)
+all: libencfs.a
+
+libencfs.a: $(encfs_objs)
+	$(AR) cr $@ $^
 
 clean:
 	$(RM) $(encfs_objs)

@@ -105,6 +105,9 @@ struct EncFS_Opts {
   ConfigMode configMode;
   std::string config;  // path to configuration file (or empty)
 
+  unsigned char *volumeKeyData;
+  int volumeKeyLen;
+
   EncFS_Opts() {
     createIfNotFound = true;
     idleTracking = false;
@@ -122,6 +125,7 @@ struct EncFS_Opts {
     readOnly = false;
     insecure = false;
     requireMac = false;
+    volumeKeyData = nullptr; volumeKeyLen = 0; // added for findvolkey
   }
 };
 

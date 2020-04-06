@@ -38,6 +38,8 @@ namespace encfs {
 
 class SSLKey;
 
+unsigned char *SSLKey_getData(const SSLKey *key); // added for findvolkey
+
 /*
     Implements Cipher interface for OpenSSL's ciphers.
 
@@ -102,6 +104,8 @@ class SSL_Cipher : public Cipher {
   // create a new random key
   virtual CipherKey newRandomKey();
 
+  // added for findvolkey
+  virtual CipherKey forceKey(const unsigned char *keydata, int len);
   // data must be len keySize()
   virtual CipherKey readKey(const unsigned char *data,
                             const CipherKey &encodingKey, bool checkKey);
@@ -113,6 +117,7 @@ class SSL_Cipher : public Cipher {
   virtual int keySize() const;
   virtual int encodedKeySize() const;
   virtual int cipherBlockSize() const;
+  int rawKeySize() const; // added for findvolkey
 
   virtual bool randomize(unsigned char *buf, int len, bool strongRandom) const;
 

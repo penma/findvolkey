@@ -105,6 +105,11 @@ uint64_t NullCipher::MAC_64(const unsigned char *, int, const CipherKey &,
   return 0;
 }
 
+// added for findvolkey
+CipherKey NullCipher::forceKey(const unsigned char *keydata, int len) {
+  return gNullKey;
+}
+
 CipherKey NullCipher::readKey(const unsigned char *, const CipherKey &, bool) {
   return gNullKey;
 }

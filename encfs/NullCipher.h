@@ -50,6 +50,8 @@ class NullCipher : public Cipher {
   // create a new random key
   virtual CipherKey newRandomKey();
 
+  // added for findvolkey
+  virtual CipherKey forceKey(const unsigned char *keydata, int len);
   // data must be len keySize()
   virtual CipherKey readKey(const unsigned char *data,
                             const CipherKey &encodingKey, bool checkKey);

@@ -347,6 +347,10 @@ inline unsigned char *KeyData(const std::shared_ptr<SSLKey> &key) {
 inline unsigned char *IVData(const std::shared_ptr<SSLKey> &key) {
   return key->buffer + key->keySize;
 }
+// added for findvolkey
+unsigned char *SSLKey_getData(const SSLKey *key) {
+	return key->buffer;
+}
 
 void initKey(const std::shared_ptr<SSLKey> &key, const EVP_CIPHER *_blockCipher,
              const EVP_CIPHER *_streamCipher, int _keySize) {
@@ -583,6 +587,24 @@ uint64_t SSL_Cipher::MAC_64(const unsigned char *data, int len,
   return tmp;
 }
 
+// added for findvolkey
+// forces a volume key to be created from a buffer, instead of actually decrypting the key from the config file.
+CipherKey SSL_Cipher::forceKey(const unsigned char *keydata, int len) {
+	if (len != _keySize + _ivLength) {
+		RLOG(ERROR) << "key size mismatch: expected " << _keySize << "+" << _ivLength << " bytes but got only " << len;
+		return CipherKey();
+	}
+
+	std::shared_ptr<SSLKey> key(new SSLKey(_keySize, _ivLength));
+
+	memcpy(key->buffer, keydata, (size_t)_keySize + (size_t)_ivLength);
+
+	initKey(key, _blockCipher, _streamCipher, _keySize);
+
+	return key;
+}
+
+
 CipherKey SSL_Cipher::readKey(const unsigned char *data,
                               const CipherKey &masterKey, bool checkKey) {
   std::shared_ptr<SSLKey> mk = dynamic_pointer_cast<SSLKey>(masterKey);
@@ -666,6 +688,11 @@ int SSL_Cipher::keySize() const { return _keySize; }
 
 int SSL_Cipher::cipherBlockSize() const {
   return EVP_CIPHER_block_size(_blockCipher);
+}
+
+// added for findvolkey
+int SSL_Cipher::rawKeySize() const {
+  return _keySize + _ivLength;
 }
 
 /**

@@ -1654,6 +1654,8 @@ RootPtr initFS(EncFS_Context *ctx, const std::shared_ptr<EncFS_Opts> &opts) {
       return rootInfo;
     }
 
+    CipherKey volumeKey;
+    if (opts->volumeKeyData == nullptr) { // added for findvolkey
     // get user key
     CipherKey userKey;
 
@@ -1673,9 +1675,13 @@ RootPtr initFS(EncFS_Context *ctx, const std::shared_ptr<EncFS_Opts> &opts) {
 
     VLOG(1) << "cipher key size = " << cipher->encodedKeySize();
     // decode volume key..
-    CipherKey volumeKey =
+    volumeKey =
         cipher->readKey(config->getKeyData(), userKey, opts->checkKey);
     userKey.reset();
+    } else { // has volumeKeyData; for findvolkey
+      volumeKey = cipher->forceKey(opts->volumeKeyData, opts->volumeKeyLen);
+    }
+
 
     if (!volumeKey) {
       // xgroup(diag)

@@ -15,6 +15,52 @@
 #include "botched_rand.h"
 BOTCHED_RAND_FUNCS(i386_);
 
+// from SSL_Cipher.cpp
+int BytesToKey(int keyLen, int ivLen, EVP_MD *md, unsigned char *data, int dataLen, unsigned int rounds, unsigned char *out_keyiv) {
+  if (data == NULL || dataLen == 0) {
+    return 0;  // OpenSSL returns nkey here, but why?  It is a failure..
+  }
+
+  unsigned char mdBuf[EVP_MAX_MD_SIZE];
+  unsigned int mds = 0;
+  int addmd = 0;
+  int nkeyiv = keyLen + ivLen;
+
+  EVP_MD_CTX *cx = EVP_MD_CTX_new();
+  EVP_MD_CTX_init(cx);
+
+  for (;;) {
+    EVP_DigestInit_ex(cx, md, NULL);
+    if ((addmd++) != 0) {
+      EVP_DigestUpdate(cx, mdBuf, mds);
+    }
+    EVP_DigestUpdate(cx, data, dataLen);
+    EVP_DigestFinal_ex(cx, mdBuf, &mds);
+
+    for (unsigned int i = 1; i < rounds; ++i) {
+      EVP_DigestInit_ex(cx, md, NULL);
+      EVP_DigestUpdate(cx, mdBuf, mds);
+      EVP_DigestFinal_ex(cx, mdBuf, &mds);
+    }
+
+    int offset = 0;
+    int toCopy = nkeyiv < mds - offset ? nkeyiv : mds - offset;
+    if (toCopy != 0) {
+      memcpy(out_keyiv, mdBuf + offset, toCopy);
+      out_keyiv += toCopy;
+      nkeyiv -= toCopy;
+      offset += toCopy;
+    }
+    if (nkeyiv == 0) {
+      break;
+    }
+  }
+  EVP_MD_CTX_free(cx);
+  OPENSSL_cleanse(mdBuf, sizeof(mdBuf));
+
+  return keyLen;
+}
+
 void println_buf(unsigned char *buf, int len) {
 	for (int i = 0; i < len; i++) {
 		printf("%02x%s", buf[i], (i % 4) == 3 ? " " : "");
@@ -64,4 +110,14 @@ int main() {
 	i386_ssleay_rand_bytes(buf, len);
 	printf("Repli_' ");
 	println_buf(buf, len);
+
+	printf("\n");
+	i386_b_rand_reset(18625);
+	i386_ssleay_rand_bytes(buf, 4); // some versions did this
+	i386_ssleay_rand_bytes(buf, len);
+	println_buf(buf, len);
+	// but those were not used directly as key bytes
+	unsigned char kbuf[48];
+	int bytes = BytesToKey(32, 16, EVP_sha1(), buf, len, 16, kbuf);
+	println_buf(kbuf, 48);
 }

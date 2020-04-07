@@ -61,8 +61,8 @@ using namespace encfs;
 
 static bool checkDir(string &rootDir);
 
-static int opt_check_count = 5;
-static bool opt_decrypt_files = false;
+static int opt_check_count = 5; // TODO use
+static bool opt_decrypt_files = false; // TODO use
 
 auto ctx = std::make_shared<EncFS_Context>();
 

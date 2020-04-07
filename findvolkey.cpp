@@ -547,8 +547,6 @@ static int writeNewVolumeKey(bool useStdin, string &rootDir, unsigned char *keyb
 			exit(1);
 		}
 
-		cout << "Would overwrite " << configPath << "\n";
-
 		// Construct backup path name
 		time_t rawtime;
 		struct tm *timeinfo;
@@ -559,18 +557,50 @@ static int writeNewVolumeKey(bool useStdin, string &rootDir, unsigned char *keyb
 		string backupName = configPath + '-' + buffer;
 
 		// Make backup
-		// Note: doesn't check if it exists. Highly unlikely given the seconds counter though.
-		// If someone cares, write some code that copies the contents (can check for nonexistence on file creation) or uses renameat2()
-		if (rename(configPath.c_str(), backupName.c_str())) {
-			cerr << "Unable to make a backup copy of " << configPath << " to " << backupName << ":";
+		int cfg_fd = open(configPath.c_str(), O_RDONLY);
+		if (cfg_fd == -1) {
+			cerr << "Unable to open old config file " << configPath << " for reading:";
 			perror("");
 			exit(1);
 		}
+		int bup_fd = open(backupName.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+		if (bup_fd == -1) {
+			cerr << "Unable to open backup config file " << backupName << " for writing:";
+			perror("");
+			exit(1);
+		}
+		while (1) {
+			#define BLOCKSIZE 64
+			char *buf[BLOCKSIZE];
+			ssize_t nread = read(cfg_fd, buf, BLOCKSIZE);
+			if (nread > 0) {
+				ssize_t nwritten = write(bup_fd, buf, nread);
+				if (nwritten != nread) {
+					perror("Write to backup config file failed");
+					exit(1);
+				}
+			} else if (nread == 0) {
+				// done
+				break;
+			} else {
+				perror("Read from original config file failed");
+				exit(1);
+			}
+		}
+		if (close(bup_fd) != 0) {
+			perror("Closing backup config file failed");
+			exit(1);
+		}
+		if (close(cfg_fd) != 0) {
+			perror("Closing original config file failed");
+			exit(1);
+		}
+		
 		cerr << "Created backup of old config file under " << backupName << "\n";
 
 		if (saveConfig(cfgType, rootDir, config, "")) {
 			// password modified -- changes volume key of filesystem..
-			cout << _("Volume Key successfully updated.\n");
+			cout << _("Volume Key successfully updated. You can now mount the volume as usual :-)\n");
 			result = EXIT_SUCCESS;
 		} else {
 			cout << _("Error saving modified config file.\n");
@@ -1124,30 +1154,9 @@ int main(int argc, char **argv) {
 		int keylen = cipher->rawKeySize();
 		unsigned char *keybytes = (unsigned char*) malloc(keylen);
 		parseKeyFromArgs(argv+2, argc-2, keybytes, keylen);
-		writeNewVolumeKey(false, rootDir, keybytes, keylen);
-	}
-
-
-
-
-	/* Obtain more info */
-	std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
-	opts->rootDir = rootDir;
-	opts->createIfNotFound = false;
-	opts->checkKey = false;
-	opts->volumeKeyData = (unsigned char *) malloc(48);
-	opts->volumeKeyLen = 48;
-	RootPtr rootPtr = initFS(ctx.get(), opts);
-	if (!rootPtr) {
-		cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+		return writeNewVolumeKey(false, rootDir, keybytes, keylen);
+	} else {
+		cerr << "Unknown command: " << command << "\n";
 		return EXIT_FAILURE;
-	}
-
-
-
-
-	printf("Args: #%d\n", argc);
-	for (int i = 0; i < argc; i++) {
-		printf("%d: %s\n", i, argv[i]);
 	}
 }

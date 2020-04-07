@@ -59,9 +59,6 @@ using namespace std;
 using gnu::autosprintf;
 using namespace encfs;
 
-static int chpasswd(int argc, char **argv);
-static int chpasswdAutomaticly(int argc, char **argv);
-static int ckpasswdAutomaticly(int argc, char **argv);
 static int cmd_ls(int argc, char **argv);
 static int cmd_decode(int argc, char **argv);
 static int cmd_encode(int argc, char **argv);
@@ -82,9 +79,6 @@ struct CommandOpts {
 	const char *argStr;
 	const char *usageStr;
 } commands[] = {
-    {"passwd",          1, 1, chpasswd,            "(root dir)", "  -- change password for volume"},
-    {"autopasswd",      1, 1, chpasswdAutomaticly, "(root dir)", "  -- change password for volume, taking password from standard input.\n\tNo prompts are issued."},
-    {"autocheckpasswd", 1, 1, ckpasswdAutomaticly, "(root dir)", "  -- check password for volume, taking password from standard input.\n\tNo prompts are issued."},
     {"ls",              1, 2, cmd_ls, 0, 0},
     {"showcruft",       1, 1, cmd_showcruft,       "(root dir)", "  -- show undecodable filenames in the volume"},
     {"cat",             2, 4, cmd_cat,             "[--extpass=prog] [--reverse] (root dir) path", "  -- decodes the file and cats it to standard out"},
@@ -474,9 +468,20 @@ static int cmd_showcruft(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
-static int do_chpasswd(bool useStdin, bool annotate, bool checkOnly, int argc,
-                       char **argv) {
-	string rootDir = argv[1];
+// from encfs/FileUtils.cpp, am too lazy to patch it to expose it
+struct ConfigInfo_ {
+  const char *fileName;
+  ConfigType type;
+  const char *environmentOverride;
+} ConfigFileMapping[] = {
+    // current format
+    {".encfs6.xml", Config_V6, "ENCFS6_CONFIG"},
+    // backward compatible support for older versions
+    {".encfs5", Config_V5, "ENCFS5_CONFIG"},
+    {".encfs4", Config_V4, nullptr},
+    {nullptr, Config_None, nullptr}};
+
+static int writeNewVolumeKey(bool useStdin, string &rootDir, unsigned char *keybytes, int keylen) {
 	if (!checkDir(rootDir)) return EXIT_FAILURE;
 
 	EncFSConfig *config = new EncFSConfig;
@@ -488,45 +493,27 @@ static int do_chpasswd(bool useStdin, bool annotate, bool checkOnly, int argc,
 	}
 
 	// instanciate proper cipher
-	std::shared_ptr<Cipher> cipher =
-		Cipher::New(config->cipherIface, config->keySize);
+	std::shared_ptr<Cipher> cipher = Cipher::New(config->cipherIface, config->keySize);
 	if (!cipher) {
 		cout << autosprintf(_("Unable to find specified cipher \"%s\"\n"),
 				config->cipherIface.name().c_str());
 		return EXIT_FAILURE;
 	}
 
-	// ask for existing password
-	cout << _("Enter current Encfs password\n");
-	if (annotate) cerr << "$PROMPT$ passwd" << endl;
-	CipherKey userKey = config->getUserKey(useStdin);
-	if (!userKey) return EXIT_FAILURE;
-
-	// decode volume key using user key -- at this point we detect an incorrect
-	// password if the key checksum does not match (causing readKey to fail).
-	CipherKey volumeKey = cipher->readKey(config->getKeyData(), userKey);
-
-	if (!volumeKey) {
-		cout << _("Invalid password\n");
-		return EXIT_FAILURE;
-	}
-
-	if (checkOnly) {
-		cout << _("Password is correct\n");
-		return EXIT_SUCCESS;
-	}
+	// create the volume key from the key bytes
+	CipherKey volumeKey = cipher->forceKey(keybytes, keylen);
 
 	// Now, get New user key..
-	userKey.reset();
 	cout << _("Enter new Encfs password\n");
 	// reinitialize salt and iteration count
 	config->kdfIterations = 0;  // generate new
 
+	CipherKey userKey;
 	if (useStdin) {
-		if (annotate) cerr << "$PROMPT$ new_passwd" << endl;
 		userKey = config->getUserKey(true);
-	} else
+	} else {
 		userKey = config->getNewUserKey();
+	}
 
 	// re-encode the volume key using the new user key and write it out..
 	int result = EXIT_FAILURE;
@@ -540,6 +527,46 @@ static int do_chpasswd(bool useStdin, bool annotate, bool checkOnly, int argc,
 
 		config->assignKeyData(keyBuf, encodedKeySize);
 		delete[] keyBuf;
+
+		/* need to make backup of config file. For that we need to find
+		 * out its path */
+		string configPath;
+		bool foundFilename = false;
+		ConfigInfo_ *nm = ConfigFileMapping;
+		for (; nm->fileName != nullptr; nm++) {
+			if (!(nm->type == cfgType)) {
+				continue;
+			}
+
+			configPath = rootDir + nm->fileName;
+			foundFilename = true;
+			break;
+		}
+		if (!foundFilename) {
+			cerr << "Unable to determine path to config file, cannot make backup, aborting\n";
+			exit(1);
+		}
+
+		cout << "Would overwrite " << configPath << "\n";
+
+		// Construct backup path name
+		time_t rawtime;
+		struct tm *timeinfo;
+		char buffer[64];
+		time(&rawtime);
+		timeinfo = localtime(&rawtime);
+		strftime(buffer, 64, "%Y%m%d-%H%M%S", timeinfo);
+		string backupName = configPath + '-' + buffer;
+
+		// Make backup
+		// Note: doesn't check if it exists. Highly unlikely given the seconds counter though.
+		// If someone cares, write some code that copies the contents (can check for nonexistence on file creation) or uses renameat2()
+		if (rename(configPath.c_str(), backupName.c_str())) {
+			cerr << "Unable to make a backup copy of " << configPath << " to " << backupName << ":";
+			perror("");
+			exit(1);
+		}
+		cerr << "Created backup of old config file under " << backupName << "\n";
 
 		if (saveConfig(cfgType, rootDir, config, "")) {
 			// password modified -- changes volume key of filesystem..
@@ -555,18 +582,6 @@ static int do_chpasswd(bool useStdin, bool annotate, bool checkOnly, int argc,
 	volumeKey.reset();
 
 	return result;
-}
-
-static int chpasswd(int argc, char **argv) {
-  return do_chpasswd(false, false, false, argc, argv);
-}
-
-static int chpasswdAutomaticly(int argc, char **argv) {
-  return do_chpasswd(true, false, false, argc, argv);
-}
-
-static int ckpasswdAutomaticly(int argc, char **argv) {
-  return do_chpasswd(true, false, true, argc, argv);
 }
 
 
@@ -1105,6 +1120,11 @@ int main(int argc, char **argv) {
 			cout << "- The tested key generation algorithms do not match that of the version used to create the volume (\"" << config.get()->creator << "\")\n";
 			return EXIT_FAILURE;
 		}
+	} else if (!strcmp(command, "write-key")) {
+		int keylen = cipher->rawKeySize();
+		unsigned char *keybytes = (unsigned char*) malloc(keylen);
+		parseKeyFromArgs(argv+2, argc-2, keybytes, keylen);
+		writeNewVolumeKey(false, rootDir, keybytes, keylen);
 	}
 
 

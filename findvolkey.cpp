@@ -63,6 +63,7 @@ static bool checkDir(string &rootDir);
 
 static int opt_check_count = 5; // TODO use
 static bool opt_decrypt_files = false; // TODO use
+static bool opt_first_only = true;
 
 auto ctx = std::make_shared<EncFS_Context>();
 
@@ -74,17 +75,17 @@ static void usage(const char *name) {
 	cerr
 		<< "Usage:\n"
 		<< "\n"
-		<< autosprintf("  %s (root dir) search-vuln [--check-count=n] [--check-contents]\n", name)
+		<< autosprintf("  %s (root dir) search-vuln [--full-search] [--check-count=n] [--check-contents]\n", name)
 		<< "      to search for vulnerable keys and list candidates\n"
-		<< autosprintf("  %s (root dir) test-key [--check-count=n] [--check-contents] (pid-gen or key)\n", name)
+		<< autosprintf("  %s (root dir) test-key [--check-count=n] [--check-contents] (key-id)\n", name)
 		<< "      to test a specific key\n"
-		<< autosprintf("  %s (root dir) write-key (pid-gen or key)\n", name)
+		<< autosprintf("  %s (root dir) write-key (key-id)\n", name)
 		<< "      to write a new config file with the given volume key\n"
 		<< autosprintf("  %s (root dir) dump-key\n", name)
 		<< "      to decrypt a volume using password and dump the raw key bytes\n"
 		<< "\n"
 		<< "(root dir) is the path to the encrypted encfs volume\n"
-		<< "(pid-gen or id) describes the volume key, either a pid+generator as output by search-vuln, or a hexadecimal volume key\n";
+		<< "(key-id) describes the volume key, can be a hex sequence (e.g. raw ab cd ef 01 23 ...) or generator+params as output by search-vuln (e.g. esd i386 4 1234)\n";
 }
 
 
@@ -606,14 +607,18 @@ static int testForVulnerableKeysOfDebian(EncfsShaOnDebianKeygen keygen, const st
 	int numcand = 0;
 
 	string keygenDescr = keygen.describe();
-	cerr << "Checking keys of " << keygenDescr << "\n";
+	cerr << "(checking keys of " << keygenDescr << ")\n";
 	for (int pid = 0; pid <= 32768; pid++) {
 		keygen.setPID(pid);
 		keygen.generateKeybytes(keybytes, keylen);
 		int cruftScore = computeCruftScoreForRootdir(rootDir, keybytes, keylen);
 		if (cruftScore >= 0) {
-			cout << "key candidate (score " << cruftScore << "): " << keygenDescr << ' ' << pid << "\n";
+			cout << "Found candidate for volume key (score " << cruftScore << "): " << keygenDescr << ' ' << pid << "\n";
 			numcand++;
+			if (opt_first_only) {
+				cout << "(not searching for additional keys. Use --full-search for that)\n";
+				return numcand;
+			}
 		}
 	}
 	return numcand;
@@ -636,6 +641,7 @@ int main(int argc, char **argv) {
 	static struct option long_options[] = {
 		{"check-count",    required_argument,  nullptr, 'c'},
 		{"decrypt-files",  no_argument,        nullptr, 'd'},
+		{"full-search",    no_argument,        nullptr, 'f'},
 		{"help",           no_argument,        nullptr, 'h'},
 		{"version",        no_argument,        nullptr, 'V'},
 		{0, 0, 0, 0}
@@ -653,6 +659,9 @@ int main(int argc, char **argv) {
 			break;
 		case 'd':
 			opt_decrypt_files = true;
+			break;
+		case 'f':
+			opt_first_only = false;
 			break;
 		case 'h':
 			usage(argv[0]);
@@ -703,7 +712,7 @@ int main(int argc, char **argv) {
 	cerr << "Opened " << rootDir << ":\n";
 	showFSInfo(config.get());
 	std::shared_ptr<SSL_Cipher> cipher = dynamic_pointer_cast<SSL_Cipher>(config.get()->getCipher());
-	cerr << "Number of key bytes: " << cipher->rawKeySize() << "\n";
+	cerr << "Number of key bytes: " << cipher->rawKeySize() << "\n\n";
 
 	// Note that for key verification and re-writing we need to call initFS again, but this way we get at least key parameters
 
@@ -725,6 +734,7 @@ int main(int argc, char **argv) {
 		unsigned char *keydata = SSLKey_getData((SSLKey*)(rootPtr->volumeKey.get()));
 		int keylen = cipher->rawKeySize();
 
+		printf("raw ");
 		println_buf(keydata, keylen);
 
 		return EXIT_SUCCESS;
@@ -757,11 +767,14 @@ int main(int argc, char **argv) {
 		int possibleSrandBytes[] = { 4, 0 };
 		for (int srandBytes : possibleSrandBytes) {
 			for (Architecture arch : possibleArches) {
+				if (opt_first_only && numcand > 0) break;
 				EncfsShaOnDebianKeygen kg(arch, srandBytes);
 				numcand += testForVulnerableKeysOfDebian(kg, rootDir, keylen);
 			}
 		}
 		if (numcand > 0) {
+			cout << "Some key candidates were found :-D To write a key, do:\n";
+			cout << "  findvolkey " << rootDir << " write-key esd ...\n";
 			return EXIT_SUCCESS;
 		} else {
 			cout << "No candidate keys found. :-(\n";

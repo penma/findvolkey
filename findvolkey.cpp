@@ -789,6 +789,7 @@ public:
 		_arch = arch;
 		_initialSrandBytes = initialSrandBytes;
 		_prng = new DebianPRNG(arch);
+		_pid = 0;
 	}
 
 	/**
@@ -816,6 +817,17 @@ public:
 		 * total len + 0
 		 */
 		int bytes __attribute__((unused)) = BytesToKey(num, 0, EVP_sha1(), ibuf, 32, 16, buf);
+	}
+
+	string describe() {
+		string d = "esd ";
+		switch (_arch) {
+			case Arch_i386:  d += "i386 "; break;
+			case Arch_amd64: d += "amd64 "; break;
+			default: rAssert(false);
+		}
+		d += to_string(_initialSrandBytes);
+		return d;
 	}
 
 private:
@@ -907,6 +919,39 @@ static bool checkDir(string &rootDir) {
 	if (rootDir[rootDir.length() - 1] != '/') rootDir.append("/");
 
 	return true;
+}
+
+static int computeCruftScoreForRootdir(const string &rootDir, unsigned char *keybytes, int keylen) {
+	std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+	opts->rootDir = rootDir;
+	opts->createIfNotFound = false;
+	opts->checkKey = false; // meaningless anyway, we can only *guess* if it's the correct key
+	opts->volumeKeyData = keybytes;
+	opts->volumeKeyLen = keylen;
+	RootPtr rootPtr = initFS(ctx.get(), opts);
+	if (!rootPtr) {
+		cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+		return EXIT_FAILURE;
+	}
+	return computeCruftScore(rootPtr, "/", -3, +3);
+}
+
+static int testForVulnerableKeysOfDebian(EncfsShaOnDebianKeygen keygen, const string &rootDir, int keylen) {
+	unsigned char *keybytes = (unsigned char*) alloca(keylen);
+	int numcand = 0;
+
+	string keygenDescr = keygen.describe();
+	cerr << "Checking keys of " << keygenDescr << "\n";
+	for (int pid = 0; pid <= 32768; pid++) {
+		keygen.setPID(pid);
+		keygen.generateKeybytes(keybytes, keylen);
+		int cruftScore = computeCruftScoreForRootdir(rootDir, keybytes, keylen);
+		if (cruftScore >= 0) {
+			cout << "key candidate (score " << cruftScore << "): " << keygenDescr << ' ' << pid << "\n";
+			numcand++;
+		}
+	}
+	return numcand;
 }
 
 
@@ -1041,33 +1086,25 @@ int main(int argc, char **argv) {
 		return EXIT_SUCCESS;
 	} else if (!strcmp(command, "search-vuln")) {
 		int keylen = cipher->rawKeySize();
-		unsigned char *keybytes = (unsigned char*) malloc(keylen);
 
 		int numcand = 0;
-		// TODO: Try additional generators
-		EncfsShaOnDebianKeygen keygen(Arch_i386, 4);
-		for (int pid = 0; pid <= 32768; pid++) {
-			keygen.setPID(pid);
-			keygen.generateKeybytes(keybytes, keylen);
-
-			std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
-			opts->rootDir = rootDir;
-			opts->createIfNotFound = false;
-			opts->checkKey = false; // meaningless anyway, we can only *guess* if it's the correct key
-			opts->volumeKeyData = keybytes;
-			opts->volumeKeyLen = keylen;
-			RootPtr rootPtr = initFS(ctx.get(), opts);
-			if (!rootPtr) {
-				cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
-				return EXIT_FAILURE;
-			}
-			int cruftScore = computeCruftScore(rootPtr, "/", -3, +3);
-			if (cruftScore >= 0) {
-				cout << "key candidate (score " << cruftScore << "): esd i386 4 " << pid << "\n";
-				numcand++;
+		Architecture possibleArches[] = { Arch_i386, Arch_amd64 };
+		int possibleSrandBytes[] = { 4, 0 };
+		for (int srandBytes : possibleSrandBytes) {
+			for (Architecture arch : possibleArches) {
+				EncfsShaOnDebianKeygen kg(arch, srandBytes);
+				numcand += testForVulnerableKeysOfDebian(kg, rootDir, keylen);
 			}
 		}
-		return numcand > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+		if (numcand > 0) {
+			return EXIT_SUCCESS;
+		} else {
+			cout << "No candidate keys found. :-(\n";
+			cout << "Possible reasons:\n";
+			cout << "- The volume was not initially created using a vulnerable OpenSSL version\n";
+			cout << "- The tested key generation algorithms do not match that of the version used to create the volume (\"" << config.get()->creator << "\")\n";
+			return EXIT_FAILURE;
+		}
 	}
 
 

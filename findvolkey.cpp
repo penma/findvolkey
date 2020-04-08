@@ -505,13 +505,13 @@ private:
 
 static void parseKeyFromArgs(char *args[], int nargs, unsigned char *out_buf, int nkeybytes) {
 	if (nargs < 1) {
-		cerr << "Key expected, but no arguments given.\n";
+		LOG(ERROR) << "Key expected, but no arguments given.";
 		exit(EXIT_FAILURE);
 	}
 
 	if (!strcmp(args[0], "raw")) {
 		if (nargs - 1 != nkeybytes) {
-			cerr << "Expected " << nkeybytes << " bytes of key material but " << (nargs - 1) << " bytes have been provided as arguments\n";
+			LOG(ERROR) << "Expected " << nkeybytes << " bytes of key material but " << (nargs - 1) << " bytes have been provided as arguments";
 			exit(EXIT_FAILURE);
 		}
 		for (int i = 0; i < nkeybytes; i++) {
@@ -520,7 +520,7 @@ static void parseKeyFromArgs(char *args[], int nargs, unsigned char *out_buf, in
 		}
 	} else if (!strcmp(args[0], "esd")) {
 		if (nargs != 4) {
-			cerr << "Expected exactly three arguments (architecture, srand bytes, process id)\n";
+			LOG(ERROR) << "Expected exactly three arguments (architecture, srand bytes, process id)";
 			exit(EXIT_FAILURE);
 		}
 
@@ -530,7 +530,7 @@ static void parseKeyFromArgs(char *args[], int nargs, unsigned char *out_buf, in
 		} else if (!strcmp(args[1], "amd64")) {
 			arch = Arch_amd64;
 		} else {
-			cerr << "Unknown architecture \"" << args[1] << "\"\n";
+			LOG(ERROR) << "Unknown architecture \"" << args[1] << "\"";
 			exit(EXIT_FAILURE);
 		}
 		long srandBytes = strtol(args[2], NULL, 10);
@@ -540,7 +540,7 @@ static void parseKeyFromArgs(char *args[], int nargs, unsigned char *out_buf, in
 		keygen.setPID(pid);
 		keygen.generateKeybytes(out_buf, nkeybytes);
 	} else {
-		cerr << "Unknown key type \"" << args[0] << "\"\n";
+		LOG(ERROR) << "Unknown key type \"" << args[0] << "\"";
 		exit(EXIT_FAILURE);
 	}
 }
@@ -596,7 +596,7 @@ static int computeCruftScoreForRootdir(const string &rootDir, unsigned char *key
 	opts->volumeKeyLen = keylen;
 	RootPtr rootPtr = initFS(ctx.get(), opts);
 	if (!rootPtr) {
-		cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+		LOG(ERROR) << "Unable to open " << rootDir << " as an EncFS volume\n";
 		return EXIT_FAILURE;
 	}
 	return computeCruftScore(rootPtr, "/", -3, +3);
@@ -607,7 +607,7 @@ static int testForVulnerableKeysOfDebian(EncfsShaOnDebianKeygen keygen, const st
 	int numcand = 0;
 
 	string keygenDescr = keygen.describe();
-	cerr << "(checking keys of " << keygenDescr << ")\n";
+	LOG(TRACE) << "checking keys of " << keygenDescr;
 	for (int pid = 0; pid <= 32768; pid++) {
 		keygen.setPID(pid);
 		keygen.generateKeybytes(keybytes, keylen);
@@ -627,7 +627,13 @@ static int testForVulnerableKeysOfDebian(EncfsShaOnDebianKeygen keygen, const st
 
 int main(int argc, char **argv) {
 	START_EASYLOGGINGPP(argc, argv);
-	encfs::initLogging();
+	//encfs::initLogging();
+	el::Configurations defaultConf;
+	defaultConf.setToDefault();
+	defaultConf.set(el::Level::Global, el::ConfigurationType::ToFile, "false");
+	el::Loggers::addFlag(el::LoggingFlag::ColoredTerminalOutput);
+	defaultConf.setGlobally(el::ConfigurationType::Format, "%level %msg");
+	el::Loggers::reconfigureLogger("default", defaultConf);
 
 #if defined(ENABLE_NLS) && defined(LOCALEDIR)
 	setlocale(LC_ALL, "");
@@ -680,7 +686,7 @@ int main(int argc, char **argv) {
 
 	/* Should have at least two arguments now: rootdir and command */
 	if (argc < 2) {
-		cerr << "At least two non-option arguments (rootdir and command) required, but only " << argc << " given\n";
+		LOG(ERROR) << "Missing arguments. At least two non-option arguments (rootdir and command) required, but only " << argc << " given";
 		return EXIT_FAILURE;
 	}
 
@@ -694,27 +700,33 @@ int main(int argc, char **argv) {
 	/* Check if loading was successful */
 	switch (type) {
 	case Config_None:
-		cerr << rootDir << " does not seem to be an EncFS volume\n";
+		LOG(ERROR) << rootDir << " does not seem to be an EncFS volume";
 		return EXIT_FAILURE;
 	case Config_Prehistoric:
 	case Config_V3:
-		cerr << rootDir << " contains an unsupported (very old) EncFS volume\n";
+		LOG(ERROR) << rootDir << " contains an unsupported (very old) EncFS volume";
 		return EXIT_FAILURE;
 	case Config_V4:
 	case Config_V5:
 	case Config_V6:
 		break;
 	default:
-		cerr << "Unexpected EncFS config type\n";
+		LOG(ERROR) << "Unexpected EncFS config type";
 		return EXIT_FAILURE;
 	}
 
-	cerr << "Opened " << rootDir << ":\n";
+	LOG(INFO) << "Opened EncFS volume " << rootDir;
 	showFSInfo(config.get());
 	std::shared_ptr<SSL_Cipher> cipher = dynamic_pointer_cast<SSL_Cipher>(config.get()->getCipher());
 	cerr << "Number of key bytes: " << cipher->rawKeySize() << "\n\n";
 
-	// Note that for key verification and re-writing we need to call initFS again, but this way we get at least key parameters
+	// Note that for key verification and re-writing we need to call initFS again, but this way we got at least key parameters
+
+	// If the volume was created without filename encrytion then we MUST turn on content verification
+	if (config.get()->nameIface.name() == "nameio/null") {
+		LOG(WARNING) << "setting --decrypt-files because the volume has unencrypted filenames and verification is not possible otherwise";
+		opt_decrypt_files = true;
+	}
 
 	/* Success! Now find out what to do with it */
 	char *command = argv[1];
@@ -727,7 +739,7 @@ int main(int argc, char **argv) {
 		opts->checkKey = true;
 		RootPtr rootPtr = initFS(ctx.get(), opts);
 		if (!rootPtr) {
-			cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+			LOG(ERROR) << "Unable to open " << rootDir << " as an EncFS volume";
 			return EXIT_FAILURE;
 		}
 
@@ -751,7 +763,7 @@ int main(int argc, char **argv) {
 		opts->volumeKeyLen = keylen;
 		RootPtr rootPtr = initFS(ctx.get(), opts);
 		if (!rootPtr) {
-			cerr << "Unable to open " << rootDir << " as an EncFS volume\n";
+			LOG(ERROR) << "Unable to open " << rootDir << " as an EncFS volume\n";
 			return EXIT_FAILURE;
 		}
 		cerr << "If the following listing shows more than . and .., then the key was correct:\n";
@@ -789,7 +801,7 @@ int main(int argc, char **argv) {
 		parseKeyFromArgs(argv+2, argc-2, keybytes, keylen);
 		return writeNewVolumeKey(false, rootDir, keybytes, keylen);
 	} else {
-		cerr << "Unknown command: " << command << "\n";
+		LOG(ERROR) << "Unknown command: " << command;
 		return EXIT_FAILURE;
 	}
 }

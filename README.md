@@ -54,3 +54,11 @@ If you think you used a vulnerable OpenSSL for key generation but this tool cann
 - output of `encfsctl info /path/to/volume`, in particular the EncFS version that the volume was created with
 - architecture information (32/64 bit library/i386/amd64 or a totally different one like ARM?)
 - the version of the SSL library used at that time, if you still know it
+
+## Notes about the password
+
+EncFS checks passwords by (roughly) testing if a checksum based on the decrypted volume key matches. In the versions I examined, that was a 4-byte checksum. A match of the checksum will cause EncFS to mount the volume, but if the key was not actually decrypted correctly, the volume will appear empty.
+
+For that reason, exhaustive enumeration of passwords will likely come up with some false positives after a few hours/days of trying.
+
+Of course, if your EncFS volume was not created with predictable volume keys, but you assume that your password at that time was particularly weak (pet/family names, 12345, etc.) you can still try to guess the password by using standard password enumeration tools. A future version of this tool will include a mode that causes it to read passwords from standard input and check each of them. The same heuristics as for volume key enumration will be used, so false positives (correct checksum but incorrect key) can be eliminated. (Also, doing this in a single process will be slightly faster than spawning a new `encfs` process for each password to test.)

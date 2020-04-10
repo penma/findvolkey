@@ -61,7 +61,7 @@ using namespace encfs;
 
 static bool checkDir(string &rootDir);
 
-static int opt_check_count = 5; // TODO use
+static int opt_check_count = 5;
 static bool opt_decrypt_files = false; // TODO use
 static bool opt_first_only = true;
 
@@ -275,6 +275,9 @@ int computeCruftScore(
 	}
 
 	// now go back and look for directories to recurse into..
+	// note: if a directory name could not be validated, we do not
+	// recurse into it because if the dir itself was encrypted with a
+	// different key, so were the files inside it
 	dt = rootInfo->root->openDir(dirName);
 	if (!dt.valid()) {
 		// ???
@@ -296,7 +299,7 @@ int computeCruftScore(
 		}
 		if ((found <= minScore) || (found >= maxScore)) {
 			// can stop early
-			// cout << "stopping early\n";
+			// cout << "stopping early: " << found << " is outside [" << minScore << ", " << maxScore << "]\n";
 			return found;
 		}
 	}
@@ -599,7 +602,7 @@ static int computeCruftScoreForRootdir(const string &rootDir, unsigned char *key
 		LOG(ERROR) << "Unable to open " << rootDir << " as an EncFS volume\n";
 		return EXIT_FAILURE;
 	}
-	return computeCruftScore(rootPtr, "/", -3, +3);
+	return computeCruftScore(rootPtr, "/", -opt_check_count, +opt_check_count);
 }
 
 static int testForVulnerableKeysOfDebian(EncfsShaOnDebianKeygen keygen, const string &rootDir, int keylen) {

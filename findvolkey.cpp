@@ -647,6 +647,8 @@ int main(int argc, char **argv) {
 	SSL_load_error_strings();
 	SSL_library_init();
 
+	char *argv0 = argv[0];
+
 	static struct option long_options[] = {
 		{"check-count",    required_argument,  nullptr, 'c'},
 		{"check-content",  no_argument,        nullptr, 'd'},
@@ -690,6 +692,7 @@ int main(int argc, char **argv) {
 	/* Should have at least two arguments now: rootdir and command */
 	if (argc < 2) {
 		LOG(ERROR) << "Missing arguments. At least two non-option arguments (rootdir and command) required, but only " << argc << " given";
+		usage(argv0);
 		return EXIT_FAILURE;
 	}
 

@@ -62,7 +62,7 @@ using namespace encfs;
 static bool checkDir(string &rootDir);
 
 static int opt_check_count = 5;
-static bool opt_decrypt_files = false; // TODO use
+static bool opt_check_content = false; // TODO use
 static bool opt_first_only = true;
 
 auto ctx = std::make_shared<EncFS_Context>();
@@ -75,9 +75,9 @@ static void usage(const char *name) {
 	cerr
 		<< "Usage:\n"
 		<< "\n"
-		<< autosprintf("  %s (root dir) search-vuln [--full-search] [--check-count=n] [--check-contents]\n", name)
+		<< autosprintf("  %s (root dir) search-vuln [--full-search] [--check-count=n] [--check-content]\n", name)
 		<< "      to search for vulnerable keys and list candidates\n"
-		<< autosprintf("  %s (root dir) test-key [--check-count=n] [--check-contents] (key-id)\n", name)
+		<< autosprintf("  %s (root dir) test-key [--check-count=n] [--check-content] (key-id)\n", name)
 		<< "      to test a specific key\n"
 		<< autosprintf("  %s (root dir) write-key (key-id)\n", name)
 		<< "      to write a new config file with the given volume key\n"
@@ -649,7 +649,7 @@ int main(int argc, char **argv) {
 
 	static struct option long_options[] = {
 		{"check-count",    required_argument,  nullptr, 'c'},
-		{"decrypt-files",  no_argument,        nullptr, 'd'},
+		{"check-content",  no_argument,        nullptr, 'd'},
 		{"full-search",    no_argument,        nullptr, 'f'},
 		{"help",           no_argument,        nullptr, 'h'},
 		{"version",        no_argument,        nullptr, 'V'},
@@ -667,7 +667,7 @@ int main(int argc, char **argv) {
 			opt_check_count = atoi(optarg);
 			break;
 		case 'd':
-			opt_decrypt_files = true;
+			opt_check_content = true;
 			break;
 		case 'f':
 			opt_first_only = false;
@@ -727,8 +727,8 @@ int main(int argc, char **argv) {
 
 	// If the volume was created without filename encrytion then we MUST turn on content verification
 	if (config.get()->nameIface.name() == "nameio/null") {
-		LOG(WARNING) << "setting --decrypt-files because the volume has unencrypted filenames and verification is not possible otherwise";
-		opt_decrypt_files = true;
+		LOG(WARNING) << "setting --check-content because the volume has unencrypted filenames and verification is not possible otherwise";
+		opt_check_content = true;
 	}
 
 	/* Success! Now find out what to do with it */
